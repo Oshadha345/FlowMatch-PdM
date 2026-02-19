@@ -1,0 +1,1 @@
+- `notebooks/02_TimeGAN_TimeVAE_Training.ipynb` - Document training losses and hyperparameter choices 
