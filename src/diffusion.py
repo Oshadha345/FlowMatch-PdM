@@ -1,1 +1,0 @@
-# iffusion-TS architecture and sampling methods

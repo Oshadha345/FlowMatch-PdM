@@ -1,2 +1,2 @@
 # FlowMatch-PdM
-FlowMatch-PdM: Continuous-Time Generative Augmentation for Industrial Fault Diagnosis
+FlowMatch-PdM: State-Space Flow Matching with Dynamic Harmonic Priors for Physics-Aware Synthetic Fault Generation
