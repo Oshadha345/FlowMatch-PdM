@@ -1,1 +1,1 @@
-- ✔️ **`notebooks/01_EDA_and_Baselines.ipynb`**: A notebook documenting the baseline classifier performance
+- `notebooks/02_TimeGAN_TimeVAE_Training.ipynb` - Document training losses and hyperparameter choices 
