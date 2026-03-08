@@ -1,0 +1,73 @@
+# ==============================================================================
+# FlowMatch-PdM: The Golden Environment Runbook
+# Target: Python 3.10 | Architecture: Ampere (A6000/A40/RTX3090) | CUDA 12.1
+# ==============================================================================
+#
+# DO NOT blindly run `pip install -r requirements.txt`. 
+# Follow the STAGED installation commands in the comments below to prevent 
+# CUDA kernel compilation errors and silent PyTorch downgrades.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# STAGE 1: Deep Learning Core & Data Science Baseline
+# Command: pip install torch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 --index-url https://download.pytorch.org/whl/cu121
+# Command: pip install numpy==1.26.4 pandas==2.2.1 scipy==1.12.0 scikit-learn==1.4.1.post1
+# ------------------------------------------------------------------------------
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.2.1
+torchvision==0.17.1
+torchaudio==2.2.1
+numpy==1.26.4
+pandas==2.2.1
+scipy==1.12.0
+scikit-learn==1.4.1.post1
+
+# ------------------------------------------------------------------------------
+# STAGE 2: Lightning, Logging, and Safe HuggingFace Pins
+# Command: pip install pytorch-lightning==2.2.1 wandb==0.16.4 "setuptools<81"
+# Command: pip install transformers==4.39.3 accelerate==0.28.0 huggingface_hub==0.22.2
+# Note: HuggingFace libraries are strictly pinned to Spring 2024 versions to 
+# prevent PyTorch 2.4+ dependency conflicts.
+# ------------------------------------------------------------------------------
+pytorch-lightning==2.2.1
+wandb==0.16.4
+setuptools<81
+transformers==4.39.3
+accelerate==0.28.0
+huggingface_hub==0.22.2
+
+# ------------------------------------------------------------------------------
+# STAGE 3: The State-Space Backbone & Generative Solvers (CRITICAL)
+# Command: pip install packaging wheel ninja
+# Command: pip install --no-build-isolation causal-conv1d==1.2.0.post2 mamba-ssm==1.2.0.post1 torchdiffeq==0.2.3 diffusers==0.27.2
+# Note: You MUST use --no-build-isolation so pip doesn't build a temporary 
+# environment that hides our PyTorch 2.2.1 installation during C++ compilation.
+# ------------------------------------------------------------------------------
+# causal-conv1d==1.2.0.post2  # (Install manually via Stage 3 command)
+# mamba-ssm==1.2.0.post1      # (Install manually via Stage 3 command)
+# torchdiffeq==0.2.3          # (Install manually via Stage 3 command)
+# diffusers==0.27.2           # (Install manually via Stage 3 command)
+
+# ------------------------------------------------------------------------------
+# STAGE 4: Dangerous Datasets (CRITICAL)
+# Command: pip install --no-deps rul-datasets==0.3.0 tsaug==0.2.1
+# Note: You MUST use --no-deps. If you don't, rul-datasets will aggressively 
+# downgrade our environment to PyTorch 1.13 and destroy the Mamba CUDA kernels.
+# ------------------------------------------------------------------------------
+# rul-datasets==0.3.0         # (Install manually via Stage 4 command)
+# tsaug==0.2.1                # (Install manually via Stage 4 command)
+
+# ------------------------------------------------------------------------------
+# STAGE 5: Standard Utilities & Profiling
+# Command: pip install h5py==3.10.0 patool==2.2.0 imbalanced-learn==0.12.0 tensorboard==2.16.2 pyinstrument==4.6.2 psutil==5.9.8
+# ------------------------------------------------------------------------------
+h5py==3.10.0
+patool==2.2.0
+imbalanced-learn==0.12.0
+tensorboard==2.16.2
+pyinstrument==4.6.2
+psutil==5.9.8
+matplotlib==3.8.3
+seaborn==0.13.2
+tqdm==4.67.3
+jupyterlab==4.1.5

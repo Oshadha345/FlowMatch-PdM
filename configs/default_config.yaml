@@ -1,0 +1,93 @@
+# configs/default_config.yaml
+project_name: "FlowMatch-PdM"
+seed: 42
+
+# Global Training Parameters
+trainer:
+  accelerator: "gpu"
+  devices: 1
+  precision: "16-mixed"
+  patience: 10
+
+# Dataset Specific Parameters
+datasets:
+  window_size_engine: 30
+  window_size_bearing: 2048
+  rul_threshold: 0.2  # Bottom 20% of life considered "minority/fault"
+
+# ==========================================
+# Classifier Baselines (SOTA 2024-2025)
+# ==========================================
+classifier:
+  # Ref: Chen et al. arXiv:2410.03134
+  lstm:
+    hidden_dim: 100
+    num_layers: 2
+    dropout: 0.5
+    lr: 0.001
+    batch_size: 512
+    epochs: 200
+  
+  # Ref: Vashishtha et al. arXiv:2502.08689
+  cnn1d:
+    filters: [16, 64, 128, 256, 256]
+    kernel_sizes: [3, 3, 3, 3, 3]
+    dropout: 0.3
+    lr: 0.001
+    batch_size: 64
+    epochs: 100
+
+# ==========================================
+# Generative Baselines
+# ==========================================
+generative:
+  # Ref: TSGM framework arXiv:2305.11567
+  timevae:
+    latent_dim: 16
+    hidden_dim: 64
+    lr: 1e-3
+    epochs: 500
+    batch_size: 128
+  
+  # Ref: Ren et al. AIGC survey arXiv:2407.11480
+  timegan:
+    hidden_dim: 24
+    noise_dim: 32
+    lr: 1e-4
+    epochs: 500
+    batch_size: 128
+  
+  # Ref: Diff-MTS + survey arXiv:2407.11501
+  diffusion:
+    timesteps: 1000
+    lr: 2e-4
+    epochs: 200
+    batch_size: 128
+  
+  # Ref: TimeFlow (Towards Stochastic-Aware and Efficient TS Gen)
+  timeflow:
+    hidden_dim: 64
+    euler_steps: 100
+    lr: 1e-3
+    epochs: 200
+    batch_size: 128
+  
+  # Novel SS-FlowMatch Parameters
+  ss_flowmatch:
+    mamba_d_model: 128
+    mamba_d_state: 16
+    euler_steps: 100
+    lr: 1e-3
+    epochs: 200
+    batch_size: 128
+    lap_threshold: 0.05
+    tccm_lambda: 10.0
+
+# ==========================================
+# Classical Baselines
+# ==========================================
+classical:
+  smote:
+    k_neighbors: 5
+  jittering:
+    sigma: 0.05
