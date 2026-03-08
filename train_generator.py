@@ -10,8 +10,8 @@ from src.utils.logger_utils import SessionManager, setup_wandb_logger
 
 # 1. Actual Imports of the Models and Callbacks
 from src.baselines import TimeGAN, TimeVAE, DiffusionTS, TimeFlow
-from flowmatchPdM.flowmatch_model import FlowMatchPdM
-from flowmatchPdM.LAP import LayerAdaptivePruningCallback
+from flowmatchPdM.flowmatch_pdm import FlowMatchPdM
+from flowmatchPdM.model.lap import LayerAdaptivePruningCallback
 
 def main():
     parser = argparse.ArgumentParser(description="Phase 2: Train Generative Models on Minority Data")

@@ -7,7 +7,7 @@ import numpy as np
 from src.utils.data_helper import get_data_module
 from src.evaluation import TimeSeriesEvaluator
 from src.baselines import TimeGAN, TimeVAE, DiffusionTS, TimeFlow
-from flowmatchPdM.flowmatch_model import FlowMatchPdM
+from flowmatchPdM.flowmatch_pdm import FlowMatchPdM
 
 def load_generator(model_name, checkpoint_path, input_dim, window_size, config):
     """Dynamically loads the trained generator weights."""

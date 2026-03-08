@@ -7,9 +7,9 @@ import pytorch_lightning as pl
 from torchdiffeq import odeint
 import functools
 
-from flowmatchPdM.mamba_backbone import BidirectionalMambaBlock
-from flowmatchPdM.harmonic_prior import DynamicHarmonicPrior
-from flowmatchPdM.tccm_loss import TCCMManifoldLoss
+from flowmatchPdM.model.mamba_backbone import BidirectionalMambaBlock
+from flowmatchPdM.model.harmonic_prior import DynamicHarmonicPrior
+from flowmatchPdM.model.tccm_loss import TCCMManifoldLoss
 
 class FlowMatchPdM(pl.LightningModule):
     """

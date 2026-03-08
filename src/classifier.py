@@ -15,22 +15,37 @@ class CNN1DClassifier(pl.LightningModule):
         self.save_hyperparameters()
         self.learning_rate = learning_rate
         
-        # Architecture: 3 Conv blocks followed by global pooling and FC layer
+        # Architecture: 5 Conv blocks (filters 16→64→128→256→256) + GAP + FC
         self.feature_extractor = nn.Sequential(
-            nn.Conv1d(input_channels, 64, kernel_size=32, stride=4, padding=14),
+            # Block 1
+            nn.Conv1d(input_channels, 16, kernel_size=32, stride=4, padding=14),
+            nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+
+            # Block 2
+            nn.Conv1d(16, 64, kernel_size=16, stride=2, padding=7),
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=2, stride=2),
-            
-            nn.Conv1d(64, 128, kernel_size=16, stride=2, padding=7),
+
+            # Block 3
+            nn.Conv1d(64, 128, kernel_size=9, stride=1, padding=4),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=2, stride=2),
-            
-            nn.Conv1d(128, 256, kernel_size=9, stride=1, padding=4),
+
+            # Block 4
+            nn.Conv1d(128, 256, kernel_size=5, stride=1, padding=2),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.AdaptiveAvgPool1d(1) # Global Average Pooling prevents overfitting
+            nn.MaxPool1d(kernel_size=2, stride=2),
+
+            # Block 5
+            nn.Conv1d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(1) # Global Average Pooling
         )
         
         self.classifier = nn.Sequential(
@@ -102,7 +117,7 @@ class LSTMRegressor(pl.LightningModule):
     LSTM Baseline for Remaining Useful Life (RUL) Regression (CMAPSS / FEMTO).
     Optimized for capturing long-term temporal degradation dependencies.
     """
-    def __init__(self, input_dim: int, hidden_dim: int = 64, num_layers: int = 2, learning_rate: float = 1e-3):
+    def __init__(self, input_dim: int, hidden_dim: int = 100, num_layers: int = 2, learning_rate: float = 1e-3):
         super().__init__()
         self.save_hyperparameters()
         self.learning_rate = learning_rate

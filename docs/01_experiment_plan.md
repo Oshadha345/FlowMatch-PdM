@@ -160,20 +160,38 @@ Welcome to the lab! This document contains the exact sequential commands to exec
 ### Rank #1 Model (Expected: FlowMatch-PdM)
 - [ ] **Train Generators:** Run `train_generator.py` for N-CMAPSS, FEMTO, XJTU-SY, and Paderborn using `--model <TOP_1_MODEL>`.
 - [ ] **Evaluate:** Run `run_evaluation.py` for all 4 runs.
-- [ ] **Aug Classify (LSTM):** Run `train_classifier_aug.py` for N-CMAPSS, FEMTO, and XJTU-SY using the respective `<RUN_ID>`.
-- [ ] **Aug Classify (1D-CNN):** Run `train_classifier_aug.py` for Paderborn using the respective `<RUN_ID>`.
+- [ ] **Aug Classify (LSTM — N-CMAPSS):**
+  `python train_classifier_aug.py --track engine_rul --dataset N-CMAPSS --run_id <RUN_ID> --gen_model <TOP_1_MODEL>`
+- [ ] **Aug Classify (LSTM — FEMTO):**
+  `python train_classifier_aug.py --track bearing_rul --dataset FEMTO --run_id <RUN_ID> --gen_model <TOP_1_MODEL>`
+- [ ] **Aug Classify (LSTM — XJTU-SY):**
+  `python train_classifier_aug.py --track bearing_rul --dataset XJTU-SY --run_id <RUN_ID> --gen_model <TOP_1_MODEL>`
+- [ ] **Aug Classify (1D-CNN — Paderborn):**
+  `python train_classifier_aug.py --track bearing_fault --dataset PADERBORN --run_id <RUN_ID> --gen_model <TOP_1_MODEL>`
 
 ### Rank #2 Model (Expected: TimeFlow or DiffusionTS)
 - [ ] **Train Generators:** Run `train_generator.py` for N-CMAPSS, FEMTO, XJTU-SY, and Paderborn using `--model <TOP_2_MODEL>`.
 - [ ] **Evaluate:** Run `run_evaluation.py` for all 4 runs.
-- [ ] **Aug Classify (LSTM):** Run `train_classifier_aug.py` for N-CMAPSS, FEMTO, and XJTU-SY using the respective `<RUN_ID>`.
-- [ ] **Aug Classify (1D-CNN):** Run `train_classifier_aug.py` for Paderborn using the respective `<RUN_ID>`.
+- [ ] **Aug Classify (LSTM — N-CMAPSS):**
+  `python train_classifier_aug.py --track engine_rul --dataset N-CMAPSS --run_id <RUN_ID> --gen_model <TOP_2_MODEL>`
+- [ ] **Aug Classify (LSTM — FEMTO):**
+  `python train_classifier_aug.py --track bearing_rul --dataset FEMTO --run_id <RUN_ID> --gen_model <TOP_2_MODEL>`
+- [ ] **Aug Classify (LSTM — XJTU-SY):**
+  `python train_classifier_aug.py --track bearing_rul --dataset XJTU-SY --run_id <RUN_ID> --gen_model <TOP_2_MODEL>`
+- [ ] **Aug Classify (1D-CNN — Paderborn):**
+  `python train_classifier_aug.py --track bearing_fault --dataset PADERBORN --run_id <RUN_ID> --gen_model <TOP_2_MODEL>`
 
 ### Rank #3 Model
 - [ ] **Train Generators:** Run `train_generator.py` for N-CMAPSS, FEMTO, XJTU-SY, and Paderborn using `--model <TOP_3_MODEL>`.
 - [ ] **Evaluate:** Run `run_evaluation.py` for all 4 runs.
-- [ ] **Aug Classify (LSTM):** Run `train_classifier_aug.py` for N-CMAPSS, FEMTO, and XJTU-SY using the respective `<RUN_ID>`.
-- [ ] **Aug Classify (1D-CNN):** Run `train_classifier_aug.py` for Paderborn using the respective `<RUN_ID>`.
+- [ ] **Aug Classify (LSTM — N-CMAPSS):**
+  `python train_classifier_aug.py --track engine_rul --dataset N-CMAPSS --run_id <RUN_ID> --gen_model <TOP_3_MODEL>`
+- [ ] **Aug Classify (LSTM — FEMTO):**
+  `python train_classifier_aug.py --track bearing_rul --dataset FEMTO --run_id <RUN_ID> --gen_model <TOP_3_MODEL>`
+- [ ] **Aug Classify (LSTM — XJTU-SY):**
+  `python train_classifier_aug.py --track bearing_rul --dataset XJTU-SY --run_id <RUN_ID> --gen_model <TOP_3_MODEL>`
+- [ ] **Aug Classify (1D-CNN — Paderborn):**
+  `python train_classifier_aug.py --track bearing_fault --dataset PADERBORN --run_id <RUN_ID> --gen_model <TOP_3_MODEL>`
 
 ---
 
