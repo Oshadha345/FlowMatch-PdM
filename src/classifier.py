@@ -3,7 +3,19 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from torchmetrics import Accuracy, F1Score, MeanSquaredError, MeanAbsoluteError
+import numpy as np
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    matthews_corrcoef,
+    mean_squared_error,
+    mean_absolute_error,
+    r2_score,
+)
+from torchmetrics import Accuracy, MeanSquaredError
 
 class CNN1DClassifier(pl.LightningModule):
     """
@@ -60,8 +72,8 @@ class CNN1DClassifier(pl.LightningModule):
         # Metrics
         self.train_acc = Accuracy(task="multiclass", num_classes=num_classes)
         self.val_acc = Accuracy(task="multiclass", num_classes=num_classes)
-        self.test_acc = Accuracy(task="multiclass", num_classes=num_classes)
-        self.test_f1 = F1Score(task="multiclass", num_classes=num_classes, average="macro")
+        self._test_preds = []
+        self._test_targets = []
 
     def forward(self, x):
         # Input shape expected: (Batch, Channels, Sequence_Length)
@@ -100,11 +112,33 @@ class CNN1DClassifier(pl.LightningModule):
         x, y = batch
         logits = self(x)
         preds = torch.argmax(logits, dim=1)
-        
-        self.test_acc(preds, y)
-        self.test_f1(preds, y)
-        self.log('test_acc', self.test_acc)
-        self.log('test_f1', self.test_f1)
+
+        self._test_preds.append(preds.detach().cpu())
+        self._test_targets.append(y.detach().cpu())
+
+    def on_test_epoch_start(self):
+        self._test_preds = []
+        self._test_targets = []
+
+    def on_test_epoch_end(self):
+        if not self._test_preds:
+            return
+
+        y_pred = torch.cat(self._test_preds).numpy()
+        y_true = torch.cat(self._test_targets).numpy()
+
+        metrics = {
+            "test_acc": float(accuracy_score(y_true, y_pred)),
+            "test_balanced_acc": float(balanced_accuracy_score(y_true, y_pred)),
+            "test_precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
+            "test_recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
+            "test_f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+            "test_f1_weighted": float(f1_score(y_true, y_pred, average="weighted", zero_division=0)),
+            "test_mcc": float(matthews_corrcoef(y_true, y_pred)),
+        }
+
+        for name, value in metrics.items():
+            self.log(name, value, prog_bar=name in {"test_acc", "test_f1_macro"})
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)
@@ -142,8 +176,8 @@ class LSTMRegressor(pl.LightningModule):
         # Metrics
         self.train_rmse = MeanSquaredError(squared=False)
         self.val_rmse = MeanSquaredError(squared=False)
-        self.test_rmse = MeanSquaredError(squared=False)
-        self.test_mae = MeanAbsoluteError()
+        self._test_preds = []
+        self._test_targets = []
 
     def forward(self, x):
         # Input shape expected: (Batch, Sequence_Length, Features)
@@ -174,11 +208,43 @@ class LSTMRegressor(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        
-        self.test_rmse(y_hat, y.float())
-        self.test_mae(y_hat, y.float())
-        self.log('test_rmse', self.test_rmse)
-        self.log('test_mae', self.test_mae)
+
+        self._test_preds.append(y_hat.detach().cpu())
+        self._test_targets.append(y.detach().cpu().float())
+
+    def on_test_epoch_start(self):
+        self._test_preds = []
+        self._test_targets = []
+
+    def on_test_epoch_end(self):
+        if not self._test_preds:
+            return
+
+        y_pred = torch.cat(self._test_preds).numpy()
+        y_true = torch.cat(self._test_targets).numpy()
+
+        mse = float(mean_squared_error(y_true, y_pred))
+        rmse = float(np.sqrt(mse))
+        mae = float(mean_absolute_error(y_true, y_pred))
+        r2 = float(r2_score(y_true, y_pred))
+
+        denom = np.maximum(np.abs(y_true), 1e-8)
+        mape = float(np.mean(np.abs((y_true - y_pred) / denom)) * 100.0)
+
+        smape_denom = np.maximum(np.abs(y_true) + np.abs(y_pred), 1e-8)
+        smape = float(np.mean(2.0 * np.abs(y_true - y_pred) / smape_denom) * 100.0)
+
+        metrics = {
+            "test_mse": mse,
+            "test_rmse": rmse,
+            "test_mae": mae,
+            "test_r2": r2,
+            "test_mape": mape,
+            "test_smape": smape,
+        }
+
+        for name, value in metrics.items():
+            self.log(name, value, prog_bar=name in {"test_rmse", "test_mae"})
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)

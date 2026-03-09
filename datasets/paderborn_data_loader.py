@@ -1,9 +1,28 @@
 # datasets/paderborn_data_loader.py
 import os
+from pathlib import Path
 import torch
 import numpy as np
 import pytorch_lightning as pl
-from torch.utils.data import TensorDataset, DataLoader, Subset
+from torch.utils.data import Dataset, DataLoader, Subset
+
+
+class _MemmapNpyDataset(Dataset):
+    """Lazy dataset over .npy memmaps to avoid loading full arrays into RAM."""
+
+    def __init__(self, x_path: str, y_path: str):
+        self.x = np.load(x_path, mmap_mode="r")
+        self.y = np.load(y_path, mmap_mode="r")
+        if len(self.x) != len(self.y):
+            raise ValueError(f"Feature/label size mismatch: {x_path} vs {y_path}")
+
+    def __len__(self):
+        return len(self.y)
+
+    def __getitem__(self, idx):
+        x = torch.from_numpy(np.array(self.x[idx], dtype=np.float32, copy=True))
+        y = torch.tensor(int(self.y[idx]), dtype=torch.long)
+        return x, y
 
 
 class PaderbornDataModule(pl.LightningDataModule):
@@ -21,35 +40,62 @@ class PaderbornDataModule(pl.LightningDataModule):
         self.window_size = window_size
         self.batch_size = batch_size
         self.num_classes = 31
+        self._resolved_data_dir = None
+
+    def _resolve_data_dir(self) -> str:
+        if self._resolved_data_dir is not None:
+            return self._resolved_data_dir
+
+        repo_root = Path(__file__).resolve().parents[1]
+        configured = Path(self.data_dir)
+        candidates = []
+
+        # 1) explicit absolute/relative as provided by user/caller
+        candidates.append(configured)
+
+        # 2) repo-relative (FlowMatch-PdM/<data_dir>)
+        if not configured.is_absolute():
+            candidates.append(repo_root / configured)
+
+        # 3) workspace-root relative (<workspace>/<data_dir>)
+        if not configured.is_absolute():
+            candidates.append(repo_root.parent / configured)
+
+        seen = set()
+        for cand in candidates:
+            cand = cand.resolve()
+            if str(cand) in seen:
+                continue
+            seen.add(str(cand))
+            if (cand / "X_train.npy").exists():
+                self._resolved_data_dir = str(cand)
+                return self._resolved_data_dir
+
+        checked = "\n  - " + "\n  - ".join(sorted(seen))
+        raise FileNotFoundError(
+            "Paderborn processed .npy files not found. Checked paths:"
+            f"{checked}\nRun notebooks/01_dataset_analysis.ipynb preprocessing cell first."
+        )
 
     def prepare_data(self):
-        required = os.path.join(self.data_dir, "X_train.npy")
-        if not os.path.exists(required):
-            raise FileNotFoundError(
-                f"{self.data_dir}/ not found. Run notebooks/01_dataset_analysis.ipynb first."
-            )
+        self._resolve_data_dir()
 
     def setup(self, stage=None):
-        def _load(name):
-            return np.load(os.path.join(self.data_dir, f"{name}.npy"), mmap_mode='r')
+        data_dir = self._resolve_data_dir()
 
-        X_train, y_train = _load("X_train"), _load("y_train")
-        X_val,   y_val   = _load("X_val"),   _load("y_val")
-        X_test,  y_test  = _load("X_test"),  _load("y_test")
-
-        self.train_ds = TensorDataset(
-            torch.tensor(np.array(X_train), dtype=torch.float32),
-            torch.tensor(np.array(y_train), dtype=torch.long),
+        self.train_ds = _MemmapNpyDataset(
+            os.path.join(data_dir, "X_train.npy"),
+            os.path.join(data_dir, "y_train.npy"),
         )
-        self.val_ds = TensorDataset(
-            torch.tensor(np.array(X_val), dtype=torch.float32),
-            torch.tensor(np.array(y_val), dtype=torch.long),
+        self.val_ds = _MemmapNpyDataset(
+            os.path.join(data_dir, "X_val.npy"),
+            os.path.join(data_dir, "y_val.npy"),
         )
-        self.test_ds = TensorDataset(
-            torch.tensor(np.array(X_test), dtype=torch.float32),
-            torch.tensor(np.array(y_test), dtype=torch.long),
+        self.test_ds = _MemmapNpyDataset(
+            os.path.join(data_dir, "X_test.npy"),
+            os.path.join(data_dir, "y_test.npy"),
         )
-        print(f"[Paderborn] Loaded from {self.data_dir}/  "
+        print(f"[Paderborn] Loaded from {data_dir}/  "
               f"Train: {len(self.train_ds)} | Val: {len(self.val_ds)} | Test: {len(self.test_ds)}")
 
     def train_dataloader(self):
@@ -60,7 +106,18 @@ class PaderbornDataModule(pl.LightningDataModule):
         return DataLoader(self.test_ds, batch_size=self.batch_size, num_workers=4, pin_memory=True)
 
     def get_minority_dataset(self) -> Subset:
-        """Extracts strictly fault classes (labels != 0) for generative models."""
-        fault_indices = [i for i, (_, y) in enumerate(self.train_ds) if y.item() != 0]
-        print(f"[Paderborn] Extracted {len(fault_indices)} minority (fault) samples.")
-        return Subset(self.train_ds, fault_indices)
+        """Extract minority class samples based on actual train split counts."""
+        if not hasattr(self, "train_ds"):
+            self.setup(stage="fit")
+
+        y_train = np.asarray(self.train_ds.y)
+        classes, counts = np.unique(y_train, return_counts=True)
+        min_count = counts.min()
+        minority_labels = classes[counts == min_count]
+        minority_indices = np.where(np.isin(y_train, minority_labels))[0].tolist()
+
+        print(
+            f"[Paderborn] Minority label(s): {minority_labels.tolist()} "
+            f"with {int(min_count)} samples each. Extracted {len(minority_indices)} samples."
+        )
+        return Subset(self.train_ds, minority_indices)

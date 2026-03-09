@@ -46,11 +46,11 @@ Welcome to the lab! This document contains the exact sequential commands to exec
 
 ### Bearing Fault Classification Track (1D-CNN)
 
-- [ ] **Train:**  
+- [x] **Train:**  
 `python train_classifier.py --track bearing_fault --dataset CWRU`
 
-- [ ] **Evaluate:**  
-`python run_evaluation.py --track bearing_fault --dataset CWRU --model baseline`
+- [x] **Evaluate:**  
+`python run_evaluation.py --track bearing_fault --dataset CWRU --model CNN1DClassifier --run_id run4_20260309_1220`
 
 - [ ] **Train:**  
 `python train_classifier.py --track bearing_fault --dataset PADERBORN`
