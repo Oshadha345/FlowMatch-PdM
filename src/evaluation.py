@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +10,24 @@ import torch.nn as nn
 from scipy.linalg import sqrtm
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    classification_report,
+    cohen_kappa_score,
+    confusion_matrix,
+    explained_variance_score,
+    f1_score,
+    log_loss,
+    matthews_corrcoef,
+    max_error,
+    mean_absolute_error,
+    mean_squared_error,
+    median_absolute_error,
+    precision_score,
+    r2_score,
+    recall_score,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
@@ -35,6 +53,183 @@ class NextStepGRU(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hidden, _ = self.gru(x)
         return self.head(hidden)
+
+
+class SupervisedTaskEvaluator:
+    def __init__(
+        self,
+        model: nn.Module,
+        task_type: str,
+        save_dir: str,
+        device: Optional[torch.device] = None,
+        class_names: Optional[List[str]] = None,
+    ):
+        self.model = model
+        self.task_type = task_type
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.class_names = class_names
+
+        if self.task_type not in {"regression", "classification"}:
+            raise ValueError(f"Unsupported task_type '{self.task_type}'.")
+
+    def _collect_predictions(self, dataloader: DataLoader):
+        self.model = self.model.to(self.device)
+        self.model.eval()
+
+        targets = []
+        predictions = []
+        probabilities = []
+
+        with torch.no_grad():
+            for batch in dataloader:
+                x, y = batch
+                x = x.to(self.device)
+                outputs = self.model(x)
+
+                if self.task_type == "classification":
+                    probs = torch.softmax(outputs, dim=1)
+                    preds = torch.argmax(probs, dim=1)
+                    probabilities.append(probs.detach().cpu().numpy())
+                    predictions.append(preds.detach().cpu().numpy())
+                    targets.append(y.detach().cpu().numpy())
+                else:
+                    predictions.append(outputs.detach().cpu().reshape(-1).numpy())
+                    targets.append(y.detach().cpu().float().reshape(-1).numpy())
+
+        y_true = np.concatenate(targets, axis=0)
+        y_pred = np.concatenate(predictions, axis=0)
+        y_prob = np.concatenate(probabilities, axis=0) if probabilities else None
+        return y_true, y_pred, y_prob
+
+    def _write_report(self, filename_prefix: str, metrics: Dict[str, float], extra_payload: Optional[dict] = None):
+        lines = [f"{filename_prefix.replace('_', ' ').title()} Evaluation"]
+        for key, value in metrics.items():
+            if isinstance(value, (int, float, np.floating)):
+                lines.append(f"{key}: {float(value):.6f}")
+            else:
+                lines.append(f"{key}: {value}")
+
+        (self.save_dir / f"{filename_prefix}_metrics.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        payload = {"metrics": metrics}
+        if extra_payload:
+            payload.update(extra_payload)
+        (self.save_dir / f"{filename_prefix}_metrics.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _plot_regression_diagnostics(self, y_true: np.ndarray, y_pred: np.ndarray):
+        residuals = y_true - y_pred
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        axes[0].scatter(y_true, y_pred, s=18, alpha=0.5, color="#0b5d8f")
+        low = min(float(y_true.min()), float(y_pred.min()))
+        high = max(float(y_true.max()), float(y_pred.max()))
+        axes[0].plot([low, high], [low, high], linestyle="--", color="#d95f02", linewidth=2)
+        axes[0].set_title("Prediction vs Ground Truth")
+        axes[0].set_xlabel("Ground Truth")
+        axes[0].set_ylabel("Prediction")
+
+        sns.histplot(residuals, bins=40, kde=True, ax=axes[1], color="#d95f02")
+        axes[1].set_title("Residual Distribution")
+        axes[1].set_xlabel("Residual")
+        axes[1].set_ylabel("Count")
+
+        fig.tight_layout()
+        fig.savefig(self.save_dir / "classifier_regression_diagnostics.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    def _plot_confusion_matrix(self, y_true: np.ndarray, y_pred: np.ndarray):
+        labels = np.unique(np.concatenate([y_true, y_pred], axis=0))
+        matrix = confusion_matrix(y_true, y_pred, labels=labels)
+        display_labels = self.class_names if self.class_names and len(self.class_names) == len(labels) else [str(label) for label in labels]
+
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        sns.heatmap(matrix, annot=True, fmt="d", cmap="Blues", ax=axes[0], xticklabels=display_labels, yticklabels=display_labels)
+        axes[0].set_title("Confusion Matrix")
+        axes[0].set_xlabel("Predicted")
+        axes[0].set_ylabel("True")
+
+        row_sums = np.maximum(matrix.sum(axis=1, keepdims=True), 1)
+        normalized = matrix / row_sums
+        sns.heatmap(normalized, annot=True, fmt=".2f", cmap="Blues", ax=axes[1], xticklabels=display_labels, yticklabels=display_labels)
+        axes[1].set_title("Normalized Confusion Matrix")
+        axes[1].set_xlabel("Predicted")
+        axes[1].set_ylabel("True")
+
+        fig.tight_layout()
+        fig.savefig(self.save_dir / "classifier_confusion_matrix.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    def evaluate(self, dataloader: DataLoader, filename_prefix: str = "classifier") -> Dict[str, float]:
+        y_true, y_pred, y_prob = self._collect_predictions(dataloader)
+
+        if self.task_type == "regression":
+            mse = float(mean_squared_error(y_true, y_pred))
+            rmse = float(np.sqrt(mse))
+            mae = float(mean_absolute_error(y_true, y_pred))
+            median_ae = float(median_absolute_error(y_true, y_pred))
+            max_err = float(max_error(y_true, y_pred))
+            r2 = float(r2_score(y_true, y_pred))
+            explained_variance = float(explained_variance_score(y_true, y_pred))
+            denom = np.maximum(np.abs(y_true), 1e-8)
+            mape = float(np.mean(np.abs((y_true - y_pred) / denom)) * 100.0)
+            smape_denom = np.maximum(np.abs(y_true) + np.abs(y_pred), 1e-8)
+            smape = float(np.mean(2.0 * np.abs(y_true - y_pred) / smape_denom) * 100.0)
+
+            metrics = {
+                "mse": mse,
+                "rmse": rmse,
+                "mae": mae,
+                "median_ae": median_ae,
+                "max_error": max_err,
+                "r2": r2,
+                "explained_variance": explained_variance,
+                "mape": mape,
+                "smape": smape,
+            }
+            self._plot_regression_diagnostics(y_true, y_pred)
+            self._write_report(
+                filename_prefix,
+                metrics,
+                extra_payload={
+                    "task_type": self.task_type,
+                    "num_samples": int(len(y_true)),
+                },
+            )
+            return metrics
+
+        cross_entropy = float(log_loss(y_true, y_prob, labels=np.unique(y_true))) if y_prob is not None else float("nan")
+
+        metrics = {
+            "cross_entropy": cross_entropy,
+            "accuracy": float(accuracy_score(y_true, y_pred)),
+            "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+            "precision_macro": float(precision_score(y_true, y_pred, average="macro", zero_division=0)),
+            "precision_weighted": float(precision_score(y_true, y_pred, average="weighted", zero_division=0)),
+            "recall_macro": float(recall_score(y_true, y_pred, average="macro", zero_division=0)),
+            "recall_weighted": float(recall_score(y_true, y_pred, average="weighted", zero_division=0)),
+            "f1_micro": float(f1_score(y_true, y_pred, average="micro", zero_division=0)),
+            "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+            "f1_weighted": float(f1_score(y_true, y_pred, average="weighted", zero_division=0)),
+            "mcc": float(matthews_corrcoef(y_true, y_pred)),
+            "cohen_kappa": float(cohen_kappa_score(y_true, y_pred)),
+        }
+
+        report = classification_report(y_true, y_pred, zero_division=0, output_dict=True)
+        self._plot_confusion_matrix(y_true, y_pred)
+        self._write_report(
+            filename_prefix,
+            metrics,
+            extra_payload={
+                "task_type": self.task_type,
+                "num_samples": int(len(y_true)),
+                "classification_report": report,
+            },
+        )
+        return metrics
 
 
 class TimeSeriesEvaluator:

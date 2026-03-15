@@ -24,6 +24,7 @@ Naming contract:
 - CLI model name: `FlowMatch`
 - implementation class: `FlowMatchPdM`
 - config block: `generative.flowmatch_pdm`
+- ablation flags: `no_prior`, `no_tccm`, `no_lap`
 
 ### 2.1 Training Path
 
@@ -230,6 +231,10 @@ minority_dataset = all train windows with labels in minority_labels
 ## 6. Evaluation Metrics
 
 Implemented in `src/evaluation.py`.
+
+There are now two evaluation modes:
+- classifier / regressor evaluation
+- generator / synthetic-data evaluation
 
 ## 6.1 FTSD
 

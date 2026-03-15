@@ -23,10 +23,12 @@ class FlowMatchPdM(pl.LightningModule):
         self.window_size = window_size
         self.d_model = config.get('mamba_d_model', 128)
         self.euler_steps = config.get('euler_steps', 100)
+        self.use_harmonic_prior = bool(config.get('use_harmonic_prior', True))
+        self.use_tccm = bool(config.get('use_tccm', True))
         
         # 1. Physics-Informed Prior
         # Assumes condition_dim is 1 for this example (e.g., motor load or HI)
-        self.harmonic_prior = DynamicHarmonicPrior(condition_dim=1, window_size=window_size)
+        self.harmonic_prior = DynamicHarmonicPrior(condition_dim=1, window_size=window_size) if self.use_harmonic_prior else None
         
         # 2. Vector Field Estimator (Mamba Backbone)
         # Project input to Mamba dimension
@@ -42,7 +44,7 @@ class FlowMatchPdM(pl.LightningModule):
         self.output_proj = nn.Linear(self.d_model, input_dim)
         
         # 3. Constraint & Pruning Infrastructure
-        self.tccm_loss = TCCMManifoldLoss(lambda_weight=config.get('tccm_lambda', 10.0))
+        self.tccm_loss = TCCMManifoldLoss(lambda_weight=config.get('tccm_lambda', 10.0)) if self.use_tccm else None
         
         # LAP Tracking Dictionaries
         self.mamba_activations = {}
@@ -112,7 +114,7 @@ class FlowMatchPdM(pl.LightningModule):
             
         # 1. Base Distribution: Dynamic Conditioned Harmonic Prior
         # This replaces standard pure noise!
-        x0 = self.harmonic_prior(cond, batch_size, self.device)
+        x0 = self.harmonic_prior(cond, batch_size, self.device) if self.use_harmonic_prior else torch.randn_like(x1)
         
         # Ensure x0 dimensions match x1 (CWRU is 1D, CMAPSS is 14D)
         if x0.shape[-1] != x1.shape[-1]:
@@ -134,7 +136,7 @@ class FlowMatchPdM(pl.LightningModule):
         
         # 6. Apply TCCM Hyper-Manifold Penalty (Enforce physics constraint)
         # We pass the predicted vector field and the condition (RUL/HI)
-        tccm_penalty = self.tccm_loss(vt, cond)
+        tccm_penalty = self.tccm_loss(vt, cond) if self.use_tccm else torch.tensor(0.0, device=self.device)
         
         loss = fm_loss + tccm_penalty
         
@@ -152,9 +154,12 @@ class FlowMatchPdM(pl.LightningModule):
         Generates synthetic degradation data by solving the ODE.
         """
         # Start at our physics-informed harmonic prior, NOT pure noise
-        x0 = self.harmonic_prior(conditions, num_samples, self.device)
-        if x0.shape[-1] != self.input_dim:
-            x0 = x0.repeat(1, 1, self.input_dim)
+        if self.use_harmonic_prior:
+            x0 = self.harmonic_prior(conditions, num_samples, self.device)
+            if x0.shape[-1] != self.input_dim:
+                x0 = x0.repeat(1, 1, self.input_dim)
+        else:
+            x0 = torch.randn(num_samples, self.window_size, self.input_dim, device=self.device)
             
         t_span = torch.linspace(0.0, 1.0, self.euler_steps, device=self.device)
         

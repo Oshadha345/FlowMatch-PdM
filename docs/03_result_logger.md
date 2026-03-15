@@ -1,39 +1,38 @@
 # 📊 Experiment Results Ledger
 
-Log only successful runs here. This file is the single source of truth for the paper tables, comparison charts, and final model ranking. Never overwrite a score without confirming the exact `run_id`.
+Log only successful runs here. This file is the single source of truth for baseline tables, generator fidelity tables, augmented-classifier results, ablations, and the final sweep winner.
 
 ---
 
 ## Logging Rules
 
-- Write the metric exactly as it appears in the terminal or JSON artifact.
-- Record the matching `run_id` for every row.
-- For Phase 2 and Phase 3 generator work, record both the generator `run_id` and the downstream augmented-classifier `run_id` in the notes column when they differ.
-- Freeze the Top 1, Top 2, and Top 3 ranking only after Table 3 is complete.
+- Record the exact `run_id` for every populated row.
+- For generator rows, log the generator `run_id`.
+- For augmented-classifier rows, log both the generator source `run_id` and the classifier `run_id` in the notes column when they differ.
+- Treat `evaluation_results/classifier_metrics.json` as the authoritative classifier artifact.
+- Treat `evaluation_results/metrics.json` as the authoritative generator artifact.
 
 ---
 
-## 🟢 Table 1: Phase 0 - Pure Baselines
+## 🟢 Table 1: Phase 0 - Baseline Classifiers
 
-*Source: terminal output and `evaluation_results/phase0_metrics.json` from `train_classifier.py`.*
-*Metric rule: RMSE for RUL tracks. F1-score for classification tracks.*
+*Source: `evaluation_results/classifier_metrics.json` from baseline `train_classifier.py` runs.*
 
-| Dataset | Track | Metric | Baseline Score | Run ID / Notes |
+| Dataset | Track | Primary Metric | Score | Run ID / Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **CMAPSS** | Engine RUL | RMSE (↓) | - | - |
 | **N-CMAPSS** | Engine RUL | RMSE (↓) | - | - |
 | **FEMTO** | Bearing RUL | RMSE (↓) | - | - |
 | **XJTU-SY** | Bearing RUL | RMSE (↓) | - | - |
-| **CWRU** | Fault Classification | F1-Score (↑) | - | - |
-| **DEMADICS** | Fault Classification | F1-Score (↑) | - | - |
-| **Paderborn** | Fault Classification | F1-Score (↑) | - | - |
+| **CWRU** | Fault Classification | F1 Macro (↑) | - | - |
+| **DEMADICS** | Fault Classification | F1 Macro (↑) | - | - |
+| **Paderborn** | Fault Classification | F1 Macro (↑) | - | - |
 
 ---
 
-## 🔵 Table 2: Phase 2 - Generative Fidelity On Primary Datasets
+## 🔵 Table 2: Phase 2 - Generator Fidelity On Primary Datasets
 
-*Source: `evaluation_results/metrics.txt` and `evaluation_results/metrics.json` from `run_evaluation.py`.*
-*Lower is better for FTSD, MMD, Discriminative Score, and TSTR MAE.*
+*Source: `evaluation_results/metrics.json` from generator runs.*
 
 ### CMAPSS
 
@@ -45,7 +44,7 @@ Log only successful runs here. This file is the single source of truth for the p
 | FaultDiffusion | - | - | - | - | - |
 | DiffusionTS | - | - | - | - | - |
 | TimeFlow | - | - | - | - | - |
-| **FlowMatch-PdM (CLI: `FlowMatch`)** | **-** | **-** | **-** | **-** | **-** |
+| **FlowMatch-PdM** | **-** | **-** | **-** | **-** | **-** |
 
 ### CWRU
 
@@ -57,7 +56,7 @@ Log only successful runs here. This file is the single source of truth for the p
 | FaultDiffusion | - | - | - | - | - |
 | DiffusionTS | - | - | - | - | - |
 | TimeFlow | - | - | - | - | - |
-| **FlowMatch-PdM (CLI: `FlowMatch`)** | **-** | **-** | **-** | **-** | **-** |
+| **FlowMatch-PdM** | **-** | **-** | **-** | **-** | **-** |
 
 ### DEMADICS
 
@@ -69,16 +68,15 @@ Log only successful runs here. This file is the single source of truth for the p
 | FaultDiffusion | - | - | - | - | - |
 | DiffusionTS | - | - | - | - | - |
 | TimeFlow | - | - | - | - | - |
-| **FlowMatch-PdM (CLI: `FlowMatch`)** | **-** | **-** | **-** | **-** | **-** |
+| **FlowMatch-PdM** | **-** | **-** | **-** | **-** | **-** |
 
 ---
 
 ## 🟣 Table 3: Phase 1 And Phase 2 - Downstream Utility
 
-*Source: terminal output and `evaluation_results/phase3_metrics.json` from `train_classifier_aug.py`.*
-*Question: how much does classical or synthetic augmentation improve the Phase 0 baseline?*
+*Source: `evaluation_results/classifier_metrics.json` from augmented classifier runs.*
 
-| Augmentation Method | CMAPSS (RMSE ↓) | CWRU (F1-Score ↑) | DEMADICS (F1-Score ↑) | Run ID / Notes |
+| Augmentation Method | CMAPSS (RMSE ↓) | CWRU (F1 Macro ↑) | DEMADICS (F1 Macro ↑) | Run ID / Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **None (Phase 0 Baseline)** | - | - | - | - |
 | + Noise | - | - | - | - |
@@ -93,42 +91,52 @@ Log only successful runs here. This file is the single source of truth for the p
 
 ---
 
-## 🟠 Table 4: Phase 3 - Scalability And Generalization
+## 🟠 Table 4: Phase 3 - Secondary-Dataset Generalization
 
-*Source: terminal output and `evaluation_results/phase3_metrics.json` from `train_classifier_aug.py` on the secondary datasets.*
-*Use this table to freeze the final Top 1, Top 2, and Top 3 ranking from Table 3.*
+*Source: `evaluation_results/classifier_metrics.json` from secondary-dataset augmented classifier runs.*
 
-| Dataset (Metric) | Phase 0 Baseline | Top 1 Model / Score | Top 2 Model / Score | Top 3 Model / Score | Run ID / Notes |
+| Dataset (Metric) | Baseline | Top 1 Model / Score | Top 2 Model / Score | Top 3 Model / Score | Run ID / Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **N-CMAPSS** (RMSE ↓) | - | - | - | - | - |
 | **FEMTO** (RMSE ↓) | - | - | - | - | - |
 | **XJTU-SY** (RMSE ↓) | - | - | - | - | - |
-| **Paderborn** (F1-Score ↑) | - | - | - | - | - |
+| **Paderborn** (F1 Macro ↑) | - | - | - | - | - |
 
 ---
 
-## 🔴 Table 5: Phase 5 - Final CMAPSS Proof-Of-Concept
+## 🔴 Table 5: Phase 4 - FlowMatch-PdM Ablations On CMAPSS
 
-*Source: the final rerun after the ledger is frozen.*
+*Source: generator `evaluation_results/metrics.json` plus augmented-classifier `evaluation_results/classifier_metrics.json`.*
 
-| Item | Final Value | Run ID / Notes |
+| Variant | FTSD (↓) | MMD (↓) | TSTR MAE (↓) | Downstream RMSE (↓) | Run ID / Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Full FlowMatch-PdM** | - | - | - | - | - |
+| No Prior | - | - | - | - | - |
+| No TCCM | - | - | - | - | - |
+| No LAP | - | - | - | - | - |
+
+---
+
+## 🏁 Table 6: Phase 5 - W&B Sweep And Final CMAPSS Run
+
+| Item | Value | Run ID / Notes |
 | :--- | :--- | :--- |
-| Phase 0 baseline score | - | - |
-| Final generator model | FlowMatch-PdM | - |
-| Generator evaluation FTSD | - | - |
-| Generator evaluation MMD | - | - |
-| Generator evaluation Disc. Score | - | - |
-| Generator evaluation TSTR MAE | - | - |
-| Final augmented classifier score | - | - |
-| Final proof-of-concept status | - | - |
+| Sweep config path | `configs/sweep_flowmatch_cmapss.yaml` | - |
+| Sweep winner model | FlowMatch-PdM | - |
+| Sweep winner FTSD | - | - |
+| Sweep winner TSTR MAE | - | - |
+| Final proof-of-concept run status | - | - |
+| Final proof-of-concept generator run | - | - |
+| Final proof-of-concept classifier run | - | - |
 
 ---
 
 ## Final Freeze Checklist
 
 - [ ] Table 1 is complete
-- [ ] Table 2 is complete for `CMAPSS`, `CWRU`, and `DEMADICS`
-- [ ] Table 3 is complete and the winner ranking is frozen
-- [ ] Table 4 is complete for all secondary datasets
-- [ ] Table 5 contains the final CMAPSS rerun
+- [ ] Table 2 is complete
+- [ ] Table 3 is complete and the Top 1 / Top 2 / Top 3 order is frozen
+- [ ] Table 4 is complete
+- [ ] Table 5 is complete
+- [ ] Table 6 is complete
 - [ ] Every populated row includes the exact `run_id`

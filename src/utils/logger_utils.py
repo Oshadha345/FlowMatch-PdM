@@ -41,6 +41,29 @@ def resolve_model_root(track: str, dataset: str, model_name: str) -> Path:
     return _results_root() / track / dataset / model_name
 
 
+def resolve_experiment_model_name(model_name: str, ablation: Optional[str] = None) -> str:
+    if not ablation or ablation == "none":
+        return model_name
+    return f"{model_name}_ablation_{ablation}"
+
+
+def resolve_classifier_experiment_name(
+    model_name: str,
+    aug: Optional[str] = None,
+    gen_model: Optional[str] = None,
+    gen_run_id: Optional[str] = None,
+    gen_ablation: Optional[str] = None,
+) -> str:
+    if gen_model and gen_run_id:
+        gen_name = resolve_experiment_model_name(gen_model, gen_ablation)
+        normalized_gen_run_id = _normalize_run_id(gen_run_id) or gen_run_id
+        aug_tag = f"gen_{gen_name}_{normalized_gen_run_id}"
+        return f"{model_name}_aug_{aug_tag}"
+    if aug and aug != "none":
+        return f"{model_name}_aug_{aug}"
+    return model_name
+
+
 def resolve_run_dir(track: str, dataset: str, model_name: str, run_id: Optional[str] = None) -> Path:
     model_root = resolve_model_root(track, dataset, model_name)
     if not model_root.exists():

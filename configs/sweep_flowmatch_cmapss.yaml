@@ -1,0 +1,57 @@
+program: train_generator.py
+method: bayes
+metric:
+  name: evaluation/ftsd
+  goal: minimize
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --track
+  - engine_rul
+  - --dataset
+  - CMAPSS
+  - --model
+  - FlowMatch
+  - --use_wandb
+  - --config
+  - configs/default_config.yaml
+  - --lr
+  - ${lr}
+  - --batch_size
+  - ${batch_size}
+  - --epochs
+  - ${epochs}
+  - --euler_steps
+  - ${euler_steps}
+  - --mamba_d_model
+  - ${mamba_d_model}
+  - --mamba_d_state
+  - ${mamba_d_state}
+  - --tccm_lambda
+  - ${tccm_lambda}
+  - --lap_threshold
+  - ${lap_threshold}
+parameters:
+  lr:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.005
+  batch_size:
+    values: [64, 128]
+  epochs:
+    values: [150, 200]
+  euler_steps:
+    values: [50, 100, 150]
+  mamba_d_model:
+    values: [64, 128, 192]
+  mamba_d_state:
+    values: [8, 16, 32]
+  tccm_lambda:
+    distribution: uniform
+    min: 1.0
+    max: 20.0
+  lap_threshold:
+    distribution: uniform
+    min: 0.01
+    max: 0.10

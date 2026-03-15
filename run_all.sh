@@ -33,19 +33,12 @@ print(resolve_run_dir("${TRACK}", "${DATASET}", "${GEN_MODEL}").name)
 PY
 )"
 
-  echo "[run_all] Phase 3 evaluation -> ${GEN_MODEL} (${RUN_ID})"
-  "$PYTHON_BIN" run_evaluation.py \
-    --track "$TRACK" \
-    --dataset "$DATASET" \
-    --model "$GEN_MODEL" \
-    --run_id "$RUN_ID"
-
   echo "[run_all] Phase 3 classifier retraining -> ${GEN_MODEL} (${RUN_ID})"
-  "$PYTHON_BIN" train_classifier_aug.py \
+  "$PYTHON_BIN" train_classifier.py \
     --track "$TRACK" \
     --dataset "$DATASET" \
     --model "$CLASSIFIER_MODEL" \
     --gen_model "$GEN_MODEL" \
-    --run_id "$RUN_ID" \
+    --source_run_id "$RUN_ID" \
     --config "$CONFIG_PATH"
 done
