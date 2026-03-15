@@ -1,218 +1,234 @@
-# train_classifier_aug.py
-"""
-Phase 1 & 3: Train Classifiers with Mixed Data Augmentation.
-
-Modes:
-  --aug smote   : SMOTE oversampling of minority classes (classical baseline).
-  --aug noise   : Gaussian jittering augmentation (classical baseline).
-  --run_id ID   : Load FlowMatch-PdM / baseline generator synthetic data from
-                  results/.../[run_id]/generator_datas/synthetic_data.npy and
-                  concatenate with real minority samples.
-
-Results are routed through SessionManager for full reproducibility.
-"""
 import argparse
-import os
-import yaml
+from pathlib import Path
 
 import numpy as np
-import torch
 import pytorch_lightning as pl
+import torch
+import yaml
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
-from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
+from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
-from src.utils.data_helper import get_data_module
-from src.utils.logger_utils import SessionManager, setup_wandb_logger
-from src.classifier import CNN1DClassifier, LSTMRegressor
 from src.baselines import ClassicalAugmenter
+from src.classifier import CNN1DClassifier, LSTMRegressor
+from src.utils.data_helper import get_data_module, get_dataset_config
+from src.utils.logger_utils import JSONMetricsTracker, SessionManager, setup_wandb_logger
+
+
+CLASSIFIER_CHOICES = ["baseline", "LSTMRegressor", "CNN1DClassifier"]
+
+
+def _resolve_classifier_name(track: str, requested_model: str) -> str:
+    default_model = "LSTMRegressor" if "rul" in track else "CNN1DClassifier"
+    model_name = default_model if requested_model == "baseline" else requested_model
+    if "rul" in track and model_name != "LSTMRegressor":
+        raise ValueError(f"Track '{track}' requires LSTMRegressor, received '{model_name}'.")
+    if track == "bearing_fault" and model_name != "CNN1DClassifier":
+        raise ValueError(f"Track '{track}' requires CNN1DClassifier, received '{model_name}'.")
+    return model_name
+
+
+def _build_model(track: str, model_name: str, config: dict, input_dim: int, num_classes: int):
+    if model_name == "LSTMRegressor":
+        return LSTMRegressor(
+            input_dim=input_dim,
+            hidden_dim=config["classifier"]["lstm"]["hidden_dim"],
+            num_layers=config["classifier"]["lstm"]["num_layers"],
+            learning_rate=config["classifier"]["lstm"]["lr"],
+        )
+    return CNN1DClassifier(
+        num_classes=num_classes,
+        input_channels=input_dim,
+        learning_rate=config["classifier"]["cnn1d"]["lr"],
+    )
+
+
+def _collect_dataset_tensors(dataset):
+    xs = []
+    ys = []
+    for x, y in dataset:
+        xs.append(x.detach().cpu())
+        ys.append(y.detach().cpu() if torch.is_tensor(y) else torch.tensor(y))
+    return torch.stack(xs), torch.stack(ys)
+
+
+def _load_generator_augmented_dataset(dm, args):
+    generator_session = SessionManager.from_existing(args.track, args.dataset, args.gen_model, run_id=args.run_id)
+    gen_dir = Path(generator_session.paths["generator_datas"])
+    x_path = gen_dir / "synthetic_data.npy"
+    y_path = gen_dir / "synthetic_targets.npy"
+    if not x_path.exists():
+        raise FileNotFoundError(f"Synthetic data artifact not found: {x_path}")
+    if not y_path.exists():
+        raise FileNotFoundError(f"Synthetic target artifact not found: {y_path}")
+
+    synthetic_x = np.load(x_path).astype(np.float32)
+    synthetic_y = np.load(y_path)
+    label_dtype = dm.train_ds[0][1].dtype if torch.is_tensor(dm.train_ds[0][1]) else torch.float32
+    synthetic_x_tensor = torch.from_numpy(synthetic_x)
+
+    if torch.is_floating_point(dm.train_ds[0][1]):
+        synthetic_y_tensor = torch.tensor(synthetic_y, dtype=torch.float32).reshape(-1)
+    else:
+        synthetic_y_tensor = torch.tensor(synthetic_y, dtype=label_dtype).reshape(-1)
+
+    synthetic_ds = TensorDataset(synthetic_x_tensor, synthetic_y_tensor)
+    mixed_ds = ConcatDataset([dm.train_ds, synthetic_ds])
+    summary = {
+        "mode": "generator",
+        "source_run_id": generator_session.run_id,
+        "source_model": args.gen_model,
+        "synthetic_count": int(len(synthetic_ds)),
+        "real_count": int(len(dm.train_ds)),
+        "total_count": int(len(mixed_ds)),
+    }
+    return mixed_ds, summary
 
 
 def _build_augmented_dataset(dm, args, config):
-    """
-    Build a balanced training dataset by mixing real data with augmented/synthetic
-    samples. Returns a new TensorDataset ready for the classifier.
-    """
     dm.prepare_data()
     dm.setup(stage="fit")
 
-    # Real training tensors
-    X_train = torch.stack([x for x, _ in dm.train_ds])
-    y_train = torch.stack([y for _, y in dm.train_ds])
+    if args.run_id:
+        return _load_generator_augmented_dataset(dm, args)
 
-    # --- Classical augmentation modes ---
-    if args.aug in ("smote", "noise"):
-        X_np = X_train.numpy()
-        y_np = y_train.numpy()
+    x_train, y_train = _collect_dataset_tensors(dm.train_ds)
+    x_np = x_train.numpy()
+    y_np = y_train.numpy()
 
-        if args.aug == "smote":
-            k = config.get("classical", {}).get("smote", {}).get("k_neighbors", 5)
-            X_aug, y_aug = ClassicalAugmenter.apply_smote(X_np, y_np, k_neighbors=k)
-            print(f"[Aug] SMOTE: {X_np.shape[0]} → {X_aug.shape[0]} samples")
-        else:  # noise / jittering
-            sigma = config.get("classical", {}).get("jittering", {}).get("sigma", 0.05)
-            X_jittered = ClassicalAugmenter.apply_jittering(X_np, sigma=sigma)
-            X_aug = np.concatenate([X_np, X_jittered], axis=0)
-            y_aug = np.concatenate([y_np, y_np], axis=0)
-            print(f"[Aug] Jittering (σ={sigma}): {X_np.shape[0]} → {X_aug.shape[0]} samples")
-
-        return TensorDataset(
-            torch.tensor(X_aug, dtype=torch.float32),
+    if args.aug == "smote":
+        if "rul" in args.track:
+            raise ValueError("SMOTE augmentation is only valid for classification tracks.")
+        x_aug, y_aug = ClassicalAugmenter.apply_smote(
+            x_np,
+            y_np,
+            k_neighbors=config.get("classical", {}).get("smote", {}).get("k_neighbors", 5),
+        )
+        dataset = TensorDataset(
+            torch.tensor(x_aug, dtype=torch.float32),
             torch.tensor(y_aug, dtype=torch.long),
         )
+        return dataset, {
+            "mode": "smote",
+            "real_count": int(len(dm.train_ds)),
+            "augmented_count": int(len(dataset)),
+        }
 
-    # --- Generative augmentation mode (Phase 3: Mixed) ---
-    if args.run_id:
-        # Locate generator model name from run directory structure
-        # Convention: results/<track>/<dataset>/<model_name>/<run_id>/
-        gen_model = args.gen_model if args.gen_model else "FlowMatch"
-        syn_dir = os.path.join(
-            "results", args.track, args.dataset, gen_model,
-            args.run_id, "generator_datas",
+    if args.aug == "noise":
+        sigma = config.get("classical", {}).get("jittering", {}).get("sigma", 0.05)
+        x_noise = ClassicalAugmenter.apply_jittering(x_np, sigma=sigma)
+        x_mixed = np.concatenate([x_np, x_noise], axis=0)
+        y_mixed = np.concatenate([y_np, y_np], axis=0)
+        y_dtype = torch.float32 if torch.is_floating_point(y_train) else torch.long
+        dataset = TensorDataset(
+            torch.tensor(x_mixed, dtype=torch.float32),
+            torch.tensor(y_mixed, dtype=y_dtype),
         )
-        syn_path = os.path.join(syn_dir, "synthetic_data.npy")
-        if not os.path.exists(syn_path):
-            raise FileNotFoundError(f"Synthetic data not found at {syn_path}")
+        return dataset, {
+            "mode": "noise",
+            "sigma": sigma,
+            "real_count": int(len(dm.train_ds)),
+            "augmented_count": int(len(dataset)),
+        }
 
-        synthetic = np.load(syn_path).astype(np.float32)
-        print(f"[Aug] Loaded {synthetic.shape[0]} synthetic samples from {syn_path}")
-
-        # Extract real minority samples
-        minority_sub = dm.get_minority_dataset()
-        X_min = torch.stack([x for x, _ in minority_sub])
-        y_min = torch.stack([y for _, y in minority_sub])
-
-        # Assign minority label to synthetic samples (use most common minority label)
-        unique_labels, counts = torch.unique(y_min, return_counts=True)
-        dominant_label = unique_labels[counts.argmax()].item()
-
-        # If synthetic data has matching batch size, pair labels from minority set
-        n_syn = synthetic.shape[0]
-        if n_syn <= len(y_min):
-            y_syn = y_min[:n_syn]
-        else:
-            # Repeat minority labels cyclically to cover all synthetic samples
-            repeats = (n_syn // len(y_min)) + 1
-            y_syn = y_min.repeat(repeats)[:n_syn]
-
-        X_syn = torch.tensor(synthetic, dtype=torch.float32)
-
-        # Concatenate: full real training set + synthetic minority
-        X_mixed = torch.cat([X_train, X_syn], dim=0)
-        y_mixed = torch.cat([y_train, y_syn], dim=0)
-        print(f"[Aug] Mixed dataset: {X_train.shape[0]} real + {n_syn} synthetic = {X_mixed.shape[0]} total")
-
-        return TensorDataset(X_mixed, y_mixed)
-
-    # Fallback: no augmentation, return original
-    print("[Aug] No augmentation specified — using raw training data.")
-    return dm.train_ds
+    return dm.train_ds, {
+        "mode": "none",
+        "real_count": int(len(dm.train_ds)),
+        "augmented_count": int(len(dm.train_ds)),
+    }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Phase 1/3: Train Classifier with Augmentation")
+    parser = argparse.ArgumentParser(description="Phase 1/3: train classifier on classical or synthetic augmentation.")
     parser.add_argument("--track", type=str, required=True, help="engine_rul, bearing_rul, or bearing_fault")
-    parser.add_argument("--dataset", type=str, required=True, help="CMAPSS, CWRU, etc.")
-    parser.add_argument("--aug", type=str, default=None, choices=["smote", "noise"],
-                        help="Classical augmentation strategy")
-    parser.add_argument("--run_id", type=str, default=None,
-                        help="Generator run-id to load synthetic .npy from results/")
-    parser.add_argument("--gen_model", type=str, default="FlowMatch",
-                        help="Name of the generator model folder under results/ (default: FlowMatch)")
+    parser.add_argument("--dataset", type=str, required=True, help="CMAPSS, FEMTO, CWRU, etc.")
+    parser.add_argument("--model", type=str, default="baseline", choices=CLASSIFIER_CHOICES)
+    parser.add_argument("--gen_model", type=str, default="FlowMatch", help="Generator model folder for synthetic augmentation.")
+    parser.add_argument("--run_id", type=str, default=None, help="Generator run identifier for synthetic augmentation.")
+    parser.add_argument("--aug", type=str, default=None, choices=["smote", "noise"], help="Classical augmentation mode.")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml")
     args = parser.parse_args()
 
-    # Load config
-    with open(args.config, "r") as f:
-        config = yaml.safe_load(f)
+    with Path(args.config).open("r", encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
 
     pl.seed_everything(config["seed"], workers=True)
 
-    # Determine track-specific settings
-    is_lstm = "rul" in args.track
-    window_size = config["datasets"]["window_size_engine"] if is_lstm else config["datasets"]["window_size_bearing"]
-    batch_size = config["classifier"]["lstm"]["batch_size"] if is_lstm else config["classifier"]["cnn1d"]["batch_size"]
+    dataset_cfg = get_dataset_config(config, args.dataset)
+    model_name = _resolve_classifier_name(args.track, args.model)
+    is_rul = "rul" in args.track
+    batch_size = config["classifier"]["lstm"]["batch_size"] if is_rul else config["classifier"]["cnn1d"]["batch_size"]
 
-    # DataModule (used for val/test splits and minority extraction)
-    dm = get_data_module(track=args.track, dataset_name=args.dataset,
-                         window_size=window_size, batch_size=batch_size)
+    dm = get_data_module(
+        track=args.track,
+        dataset_name=args.dataset,
+        window_size=dataset_cfg["window_size"],
+        batch_size=batch_size,
+    )
+    aug_train_ds, augmentation_summary = _build_augmented_dataset(dm, args, config)
+    aug_train_loader = DataLoader(
+        aug_train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+    )
 
-    # Build augmented training dataset
-    aug_train_ds = _build_augmented_dataset(dm, args, config)
-    aug_train_loader = DataLoader(aug_train_ds, batch_size=batch_size, shuffle=True,
-                                  num_workers=4, pin_memory=True)
-
-    # Ensure val/test are ready
     dm.prepare_data()
     dm.setup(stage="fit")
+    sample_x, _ = dm.train_ds[0]
+    input_dim = int(sample_x.shape[-1])
+    num_classes = int(getattr(dm, "num_classes", dataset_cfg.get("num_classes", 1)))
+    model = _build_model(args.track, model_name, config, input_dim, num_classes)
 
-    # Instantiate classifier
-    aug_tag = args.aug or f"gen_{args.run_id}" if args.run_id else "none"
-    if args.track == "engine_rul":
-        model = LSTMRegressor(
-            input_dim=14,
-            hidden_dim=config["classifier"]["lstm"]["hidden_dim"],
-            num_layers=config["classifier"]["lstm"]["num_layers"],
-            learning_rate=config["classifier"]["lstm"]["lr"],
-        )
-    elif args.track == "bearing_rul":
-        model = LSTMRegressor(
-            input_dim=2,
-            hidden_dim=config["classifier"]["lstm"]["hidden_dim"],
-            num_layers=config["classifier"]["lstm"]["num_layers"],
-            learning_rate=config["classifier"]["lstm"]["lr"],
-        )
-    elif args.track == "bearing_fault":
-        num_classes = 10 if args.dataset.upper() == "CWRU" else 32
-        model = CNN1DClassifier(
-            num_classes=num_classes,
-            learning_rate=config["classifier"]["cnn1d"]["lr"],
-        )
-
-    # Session Manager — routes all outputs to an isolated run folder
-    model_tag = f"{model.__class__.__name__}_aug_{aug_tag}"
+    aug_tag = args.aug or (f"gen_{args.gen_model}_{args.run_id}" if args.run_id else "none")
     session = SessionManager(
-        track=args.track, dataset=args.dataset,
-        model_name=model_tag, config=config,
+        track=args.track,
+        dataset=args.dataset,
+        model_name=f"{model_name}_aug_{aug_tag}",
+        config=config,
     )
     paths = session.get_paths()
 
-    # Logger & callbacks
-    experiment_name = f"AugClassify_{args.dataset}_{aug_tag}"
-    wandb_logger = setup_wandb_logger(experiment_name, config, save_dir=paths["root"])
-
-    early_stop = EarlyStopping(monitor="val_loss", patience=config["trainer"]["patience"], mode="min")
-    checkpoint_cb = ModelCheckpoint(
+    checkpoint_callback = ModelCheckpoint(
         dirpath=paths["best_model_classifier"],
-        filename="best-aug-classifier",
-        save_top_k=1,
+        filename=f"{model_name}-aug-best",
         monitor="val_loss",
         mode="min",
+        save_top_k=1,
+        save_last=True,
     )
+    early_stop = EarlyStopping(monitor="val_loss", patience=config["trainer"]["patience"], mode="min")
+    metrics_tracker = JSONMetricsTracker(output_path=str(Path(paths["evaluation_results"]) / "phase3_metrics.json"))
+    loggers = setup_wandb_logger(f"Phase3_{args.dataset}_{model_name}_{aug_tag}", config, save_dir=paths["logs"])
 
-    epochs = config["classifier"]["lstm"]["epochs"] if is_lstm else config["classifier"]["cnn1d"]["epochs"]
-
+    epochs = config["classifier"]["lstm"]["epochs"] if is_rul else config["classifier"]["cnn1d"]["epochs"]
     trainer = pl.Trainer(
         max_epochs=epochs,
         accelerator=config["trainer"]["accelerator"],
         devices=config["trainer"]["devices"],
         precision=config["trainer"]["precision"],
-        logger=wandb_logger,
-        callbacks=[early_stop, checkpoint_cb],
+        logger=loggers,
+        callbacks=[early_stop, checkpoint_callback, metrics_tracker],
         log_every_n_steps=10,
     )
 
-    # Train with augmented data, validate/test on original splits
-    print(f"\n[START] Training {model.__class__.__name__} with aug={aug_tag} on {args.dataset}")
-    print(f"[LOGS]  Routing outputs to: {paths['root']}")
+    print(f"[Phase 3] Training {model_name} with augmentation mode '{augmentation_summary['mode']}'")
+    print(f"[Phase 3] Outputs: {paths['root']}")
+    trainer.fit(model, train_dataloaders=aug_train_loader, val_dataloaders=dm.val_dataloader())
+    trainer.test(model=model, dataloaders=dm.test_dataloader(), ckpt_path="best")
 
-    trainer.fit(
-        model,
-        train_dataloaders=aug_train_loader,
-        val_dataloaders=dm.val_dataloader(),
+    session.write_json("augmentation_summary.json", augmentation_summary)
+    session.update_manifest(
+        {
+            "phase": "phase_3",
+            "classifier_model": model_name,
+            "augmentation": augmentation_summary,
+            "best_model_path": checkpoint_callback.best_model_path,
+            "input_dim": input_dim,
+            "window_size": dataset_cfg["window_size"],
+        }
     )
-
-    print(f"\n[TEST] Evaluating on unseen test set...")
-    trainer.test(model, dataloaders=dm.test_dataloader())
+    print(f"[Phase 3] Best checkpoint: {checkpoint_callback.best_model_path}")
 
 
 if __name__ == "__main__":

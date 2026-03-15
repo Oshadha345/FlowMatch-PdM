@@ -13,7 +13,7 @@ from flowmatchPdM.model.tccm_loss import TCCMManifoldLoss
 
 class FlowMatchPdM(pl.LightningModule):
     """
-    State-Space Flow Matching (SS-FlowMatch) for Predictive Maintenance.
+    FlowMatch-PdM for Predictive Maintenance.
     Integrates Bidirectional Mamba, Dynamic Harmonic Priors, TCCM, and LAP.
     """
     def __init__(self, input_dim: int, window_size: int, config: dict):
@@ -159,7 +159,7 @@ class FlowMatchPdM(pl.LightningModule):
         t_span = torch.linspace(0.0, 1.0, self.euler_steps, device=self.device)
         
         # Solve the ODE using standard Euler method
-        print(f"[SS-FlowMatch] Solving Mamba ODE over {self.euler_steps} steps...")
+        print(f"[FlowMatch-PdM] Solving Mamba ODE over {self.euler_steps} steps...")
         trajectory = odeint(lambda t, x: self.forward(t, x, conditions), x0, t_span, method='euler')
         
         return trajectory[-1]

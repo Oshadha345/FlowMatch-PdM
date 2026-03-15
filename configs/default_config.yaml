@@ -2,6 +2,9 @@
 project_name: "FlowMatch-PdM"
 seed: 42
 
+logging:
+  use_wandb: false
+
 # Global Training Parameters
 trainer:
   accelerator: "gpu"
@@ -11,9 +14,49 @@ trainer:
 
 # Dataset Specific Parameters
 datasets:
-  window_size_engine: 30
-  window_size_bearing: 2048
-  rul_threshold: 0.2  # Bottom 20% of life considered "minority/fault"
+  minority_rul_ratio: 0.2
+
+  CMAPSS:
+    track: "engine_rul"
+    window_size: 30
+    max_rul: 125
+    split_strategy: "predefined"
+    clipping: "mandatory"
+
+  N-CMAPSS:
+    track: "engine_rul"
+    window_size: 50
+    split_strategy: "predefined"
+
+  FEMTO:
+    track: "bearing_rul"
+    window_size: 2560
+    split_strategy: "predefined"
+
+  XJTU-SY:
+    track: "bearing_rul"
+    window_size: 2048
+    split_strategy: "predefined"
+
+  CWRU:
+    track: "bearing_fault"
+    window_size: 2048
+    stride: 512
+    num_classes: 10
+    split_strategy: "stratified_80_10_10"
+
+  Paderborn:
+    track: "bearing_fault"
+    window_size: 4096
+    stride: 2048
+    num_classes: 31
+    split_strategy: "stratified_80_10_10"
+
+  DEMADICS:
+    track: "bearing_fault"
+    window_size: 2048
+    num_classes: 5
+    split_strategy: "stratified_80_10_10"
 
 # ==========================================
 # Classifier Baselines (SOTA 2024-2025)
@@ -59,10 +102,12 @@ generative:
   
   # Ref: Diff-MTS + survey arXiv:2407.11501
   diffusion:
-    timesteps: 1000
+    timesteps: 200
     lr: 2e-4
     epochs: 200
     batch_size: 128
+    base_channels: 64
+    num_heads: 4
   
   # Ref: TimeFlow (Towards Stochastic-Aware and Efficient TS Gen)
   timeflow:
@@ -72,8 +117,8 @@ generative:
     epochs: 200
     batch_size: 128
   
-  # Novel SS-FlowMatch Parameters
-  ss_flowmatch:
+  # FlowMatch-PdM Parameters
+  flowmatch_pdm:
     mamba_d_model: 128
     mamba_d_state: 16
     euler_steps: 100
@@ -82,6 +127,33 @@ generative:
     batch_size: 128
     lap_threshold: 0.05
     tccm_lambda: 10.0
+
+  cotgan:
+    hidden_dim: 128
+    noise_dim: 32
+    lr: 2e-4
+    epochs: 200
+    batch_size: 64
+    sinkhorn_eps: 0.1
+    sinkhorn_iters: 30
+    martingale_weight: 10.0
+    causal_weight: 1.0
+    critic_projection_dim: 32
+
+  faultdiffusion:
+    timesteps: 200
+    lr: 2e-4
+    epochs: 200
+    batch_size: 64
+    base_channels: 96
+    num_heads: 4
+    diversity_weight: 0.05
+
+evaluation:
+  batch_size: 128
+  max_samples: 2048
+  discriminative_epochs: 20
+  predictive_epochs: 20
 
 # ==========================================
 # Classical Baselines

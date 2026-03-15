@@ -1,8 +1,43 @@
 # src/utils/data_helper.py
 import pytorch_lightning as pl
-from datasets.rul_data_loader import FlowMatchRULDataModule
+
 from datasets.cwru_data_loader import CWRUDataModule
+from datasets.demadics_data_loader import DEMADICSDataModule
 from datasets.paderborn_data_loader import PaderbornDataModule
+from datasets.rul_data_loader import FlowMatchRULDataModule
+
+
+_DATASET_NAME_ALIASES = {
+    "CMAPSS": "CMAPSS",
+    "C-MAPSS": "CMAPSS",
+    "N-CMAPSS": "N-CMAPSS",
+    "NCMAPSS": "N-CMAPSS",
+    "FEMTO": "FEMTO",
+    "XJTU-SY": "XJTU-SY",
+    "XJTU_SY": "XJTU-SY",
+    "XJTUSY": "XJTU-SY",
+    "CWRU": "CWRU",
+    "PADERBORN": "Paderborn",
+    "DEMADICS": "DEMADICS",
+}
+
+
+def canonicalize_dataset_name(dataset_name: str) -> str:
+    normalized = dataset_name.strip().upper().replace("_", "-")
+    if normalized not in _DATASET_NAME_ALIASES:
+        raise ValueError(
+            f"Unknown dataset '{dataset_name}'. Supported datasets: "
+            f"{sorted(set(_DATASET_NAME_ALIASES.values()))}."
+        )
+    return _DATASET_NAME_ALIASES[normalized]
+
+
+def get_dataset_config(config: dict, dataset_name: str) -> dict:
+    canonical_name = canonicalize_dataset_name(dataset_name)
+    datasets_cfg = config.get("datasets", {})
+    if canonical_name not in datasets_cfg:
+        raise KeyError(f"Dataset config for '{canonical_name}' not found in configs/default_config.yaml.")
+    return datasets_cfg[canonical_name]
 
 
 def get_data_module(track: str, dataset_name: str, **kwargs) -> pl.LightningDataModule:
@@ -10,23 +45,29 @@ def get_data_module(track: str, dataset_name: str, **kwargs) -> pl.LightningData
     Factory function to instantiate the correct LightningDataModule for a given track.
     """
     track = track.lower().strip()
-    dataset_name = dataset_name.upper().strip()
+    canonical_name = canonicalize_dataset_name(dataset_name)
 
-    # Track 1 & 2: Remaining Useful Life (Regression)
     if track in ["engine_rul", "bearing_rul"]:
         supported_rul = ["CMAPSS", "N-CMAPSS", "FEMTO", "XJTU-SY"]
-        if dataset_name not in supported_rul:
-            raise ValueError(f"Dataset {dataset_name} is not supported for RUL tracks. Choose from {supported_rul}.")
-        return FlowMatchRULDataModule(dataset_name=dataset_name, **kwargs)
+        if canonical_name not in supported_rul:
+            raise ValueError(
+                f"Dataset {canonical_name} is not supported for RUL tracks. "
+                f"Choose from {supported_rul}."
+            )
+        return FlowMatchRULDataModule(dataset_name=canonical_name, **kwargs)
 
-    # Track 3: Bearing Fault (Classification)
-    elif track == "bearing_fault":
-        if dataset_name == "CWRU":
+    if track == "bearing_fault":
+        if canonical_name == "CWRU":
             return CWRUDataModule(**kwargs)
-        elif dataset_name == "PADERBORN":
+        if canonical_name == "Paderborn":
             return PaderbornDataModule(**kwargs)
-        else:
-            raise ValueError(f"Dataset {dataset_name} is not supported for classification. Choose CWRU or Paderborn.")
+        if canonical_name == "DEMADICS":
+            return DEMADICSDataModule(**kwargs)
+        raise ValueError(
+            f"Dataset {canonical_name} is not supported for classification. "
+            "Choose CWRU, Paderborn, or DEMADICS."
+        )
 
-    else:
-        raise ValueError(f"Unknown track: '{track}'. Use 'engine_rul', 'bearing_rul', or 'bearing_fault'.")
+    raise ValueError(
+        f"Unknown track: '{track}'. Use 'engine_rul', 'bearing_rul', or 'bearing_fault'."
+    )

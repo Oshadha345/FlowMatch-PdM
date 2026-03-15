@@ -1,71 +1,275 @@
-# 04 — Script & Module Reference
+# 04 - Script Reference
 
-> Internal "Technical Bible" for FlowMatch-PdM.  
-> Updated: 2026-03-08
+This file is the CLI and module reference for the current repository state.
 
----
+Phase ownership:
+- Phase 0: `train_classifier.py`
+- Phase 1: `train_classifier_aug.py --aug ...`
+- Phase 2: `train_generator.py` -> `run_evaluation.py` -> `train_classifier_aug.py --gen_model ...`
+- Phase 3: same loop on the secondary datasets
+- Phase 5: `run_all.sh` proof-of-concept rerun
 
-## Root Scripts
+## 1. Top-Level Scripts
 
-### `train_classifier.py`
-Phase 0 baseline trainer. Instantiates the **CNN1DClassifier** (bearing fault) or **LSTMRegressor** (RUL) from `src/classifier.py`, wires up the correct `DataModule` via `data_helper.get_data_module()`, and runs a full PyTorch Lightning `fit → test` loop. All outputs (checkpoints, W&B logs, run configs) are routed through **SessionManager** into an isolated `results/<track>/<dataset>/<model>/run<N>_<ts>/` directory so every experiment is fully reproducible.
+## `train_classifier.py`
 
-### `train_generator.py`
-Phase 2 generative training. Loads the **minority / degraded subset** from the `DataModule`, instantiates one of five generative models (TimeVAE, TimeGAN, DiffusionTS, TimeFlow, or FlowMatch-PdM), and trains it exclusively on that minority data. For the FlowMatch-PdM model it additionally attaches the **LayerAdaptivePruningCallback**. Checkpoints are saved to `best_models_generator/` inside the SessionManager run directory.
+Purpose:
+- Phase 0 baseline training and test
 
-### `run_evaluation.py`
-Phase 2/3 evaluation. Loads a previously-trained generator from its checkpoint, generates synthetic time-series at the same sample count as the real minority set, and runs the full **TimeSeriesEvaluator** suite (FTSD, MMD, Discriminative Score, Predictive Score, PCA/t-SNE plots, KDE). Synthetic and real `.npy` arrays plus a `metrics.txt` report are persisted in `generator_datas/` and `evaluation_results/`.
+Exact CLI:
 
-### `train_classifier_aug.py`
-Phase 1 (classical augmentation) **and** Phase 3 (mixed generative augmentation). Supports three modes: `--aug smote` applies SMOTE oversampling, `--aug noise` applies Gaussian jittering, and `--run_id <ID>` loads pre-generated synthetic `.npy` data and concatenates it with the real minority samples to create a balanced "Augmented Dataset." The augmented set replaces the training loader while validation and test loaders remain untouched. Uses **SessionManager** for output isolation and **WandbLogger** for experiment tracking.
+```bash
+python train_classifier.py \
+  --track <engine_rul|bearing_rul|bearing_fault> \
+  --dataset <DATASET> \
+  --model <baseline|LSTMRegressor|CNN1DClassifier> \
+  [--run_id <CUSTOM_RUN_ID>] \
+  [--config configs/default_config.yaml]
+```
 
----
+Notes:
+- `baseline` resolves to `LSTMRegressor` for RUL tracks
+- `baseline` resolves to `CNN1DClassifier` for `bearing_fault`
+- writes to `results/<track>/<dataset>/<resolved_model>/run_<timestamp>/`
 
-## `flowmatchPdM/` — Core Generative Architecture
+## `train_generator.py`
 
-### `flowmatchPdM/flowmatch_pdm.py` — `FlowMatchPdM`
-The main `LightningModule` implementing **State-Space Flow Matching**. It composes three novel sub-modules: (1) a **DynamicHarmonicPrior** that replaces standard Gaussian noise with a physics-informed oscillatory base distribution, (2) a stack of **BidirectionalMambaBlock** layers as the ODE vector-field estimator, and (3) a **TCCMManifoldLoss** penalty with $\lambda=10$ enforcing monotonic degradation. LAP forward-hooks are registered on every Mamba block to track per-channel activation norms for downstream pruning. Generation is performed by solving the learned ODE from the harmonic prior to the data manifold via Euler integration.
+Purpose:
+- Phase 2 minority-subset generative training
 
-### `flowmatchPdM/model/mamba_backbone.py` — `BidirectionalMambaBlock`
-**Bidirectional State-Space Model.** Processes the sequence both forward and backward through two independent `Mamba` SSM modules, concatenates the outputs, fuses via a learned linear gate, and adds a residual connection with LayerNorm. This captures both past-context and future-context degradation information.
+Exact CLI:
 
-### `flowmatchPdM/model/harmonic_prior.py` — `DynamicHarmonicPrior`
-**Physics-Informed Base Distribution.** A small MLP estimates amplitude $A$ and frequency $f$ from operating conditions (e.g., motor load, health index), then generates $A \sin(2\pi f t + \phi) + \varepsilon$, where $\phi$ is a random phase and $\varepsilon \sim \mathcal{N}(0, 0.1)$. This injects domain knowledge about bearing vibration harmonics directly into the flow-matching sampling path.
+```bash
+python train_generator.py \
+  --track <engine_rul|bearing_rul|bearing_fault> \
+  --dataset <DATASET> \
+  --model <TimeVAE|TimeGAN|DiffusionTS|TimeFlow|COTGAN|FaultDiffusion|FlowMatch> \
+  [--run_id <CUSTOM_RUN_ID>] \
+  [--config configs/default_config.yaml]
+```
 
-### `flowmatchPdM/model/tccm_loss.py` — `TCCMManifoldLoss`
-**Time-Conditioned Contraction Matching.** A penalty term ($\lambda=10$) that penalises positive implied health-change in the predicted vector field, enforcing the physical constraint that degradation is monotonically non-increasing. Implemented via a ReLU gate on the mean field projection.
+Notes:
+- uses `get_minority_dataset()` from the dataset module
+- saves checkpoints into `best_models_generator/`
+- `FlowMatch` is the CLI name for FlowMatch-PdM
+- `FlowMatch` additionally attaches `LayerAdaptivePruningCallback`
+- the FlowMatch-PdM config block is `generative.flowmatch_pdm`
 
-### `flowmatchPdM/model/lap.py` — `LayerAdaptivePruningCallback`
-**Layer-Adaptive Pruning** ($\alpha=0.2$, $\beta=0.1$). A Lightning Callback that monitors per-channel L1-norm activations accumulated during each epoch. Once the activation variance stabilises below a threshold it enters the "stable phase" and begins zeroing out channels whose load falls below the $\alpha$ and $\beta$ criteria, producing a sparse, efficient Mamba backbone at convergence.
+## `run_evaluation.py`
 
----
+Purpose:
+- Generate synthetic arrays from a trained generator run
+- evaluate them against real minority data
+- persist metrics and plots
+- this is the evaluation stage used inside Phase 2 and Phase 3
 
-## `src/` — Training Infrastructure
+Exact CLI:
 
-### `src/classifier.py`
-Defines two Lightning classifiers. **CNN1DClassifier** is a 5-block 1D-CNN (filters 16 → 64 → 128 → 256 → 256) with BatchNorm, MaxPool, Global Average Pooling, and a 2-layer FC head — used for bearing fault classification. **LSTMRegressor** is a 2-layer LSTM (hidden=100) with a regression head — used for RUL prediction on CMAPSS/FEMTO data.
+```bash
+python run_evaluation.py \
+  --track <engine_rul|bearing_rul|bearing_fault> \
+  --dataset <DATASET> \
+  --model <TimeVAE|TimeGAN|DiffusionTS|TimeFlow|COTGAN|FaultDiffusion|FlowMatch> \
+  [--run_id <GENERATOR_RUN_ID>] \
+  [--config configs/default_config.yaml]
+```
 
-### `src/baselines.py`
-Contains **ClassicalAugmenter** (SMOTE + Jittering static methods) and four deep generative baselines: **TimeVAE** (recurrent VAE with ELBO), **TimeGAN** (adversarial LSTM generator/discriminator), **DiffusionTS** (DDPM with 1D-CNN denoiser), and **TimeFlow** (standard Flow Matching with an MLP vector field — no Mamba, no physics prior).
+Alias:
 
-### `src/evaluation.py`
-**TimeSeriesEvaluator** class implementing five gold-standard synthetic time-series metrics: FTSD (Fréchet distance), MMD (kernel-based distribution distance), Discriminative Score (real-vs-fake classifier), Predictive Score (TSTR MAE), plus PCA/t-SNE and KDE visualisations.
+```bash
+python run_evaluation.py --track ... --dataset ... --gen_model FlowMatch --run_id ...
+```
 
-### `src/utils/data_helper.py`
-Factory function `get_data_module()` that routes `(track, dataset_name)` to the correct `LightningDataModule`: **FlowMatchRULDataModule** for engine/bearing RUL, **CWRUDataModule** for CWRU bearing faults, **PaderbornDataModule** for Paderborn bearing faults.
+Notes:
+- if `--run_id` is omitted, the latest generator run is used
+- the generator checkpoint is loaded from the same run directory
+- the Phase 0 baseline classifier/regressor for the same dataset is auto-resolved and used as the FTSD feature extractor
+- outputs are written into the generator run itself
 
-### `src/utils/logger_utils.py`
-**SessionManager**: creates an isolated `results/<track>/<dataset>/<model>/run<N>_<ts>/` directory tree with sub-folders for generator checkpoints, classifier checkpoints, synthetic data, and evaluation results. Also dumps the exact YAML config for each run. **setup_wandb_logger()**: creates a `WandbLogger` pointing to the SessionManager's run directory. **JSONMetricsTracker**: Lightning Callback that serialises training/test metrics to JSON for LaTeX table generation.
+Exact `run_id` lookup example:
 
----
+```bash
+python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'FlowMatch').name)"
+```
 
-## `datasets/` — Data Modules
+## `train_classifier_aug.py`
 
-### `datasets/cwru_data_loader.py`
-`CWRUDataModule` — loads the pre-processed `cwru_processed.npz` (DE signals, window=2048, Z-score, 10 classes) and serves stratified train/val/test `DataLoader`s. Exposes `get_minority_dataset()` for generative training.
+Purpose:
+- Phase 1 classical augmentation
+- Phase 2 and Phase 3 synthetic-data augmentation
 
-### `datasets/paderborn_data_loader.py`
-`PaderbornDataModule` — loads `paderborn_processed.npz` (window=4096, Z-score, 32 classes). Same interface as CWRU.
+Exact CLI:
 
-### `datasets/rul_data_loader.py`
-`FlowMatchRULDataModule` — wraps the `rul-datasets` library to handle CMAPSS, N-CMAPSS, FEMTO, and XJTU-SY with automatic download, windowing, normalisation, and minority extraction via `get_minority_dataset(rul_threshold_ratio)`.
+```bash
+python train_classifier_aug.py \
+  --track <engine_rul|bearing_rul|bearing_fault> \
+  --dataset <DATASET> \
+  --model <baseline|LSTMRegressor|CNN1DClassifier> \
+  [--aug <noise|smote>] \
+  [--gen_model <TimeVAE|TimeGAN|DiffusionTS|TimeFlow|COTGAN|FaultDiffusion|FlowMatch>] \
+  [--run_id <GENERATOR_RUN_ID>] \
+  [--config configs/default_config.yaml]
+```
+
+Mode behavior:
+- `--aug noise`: duplicates the training set with Gaussian jittering
+- `--aug smote`: classification only
+- `--gen_model ... --run_id ...`: loads `synthetic_data.npy` and `synthetic_targets.npy` from the generator run and concatenates them with the real training set
+
+Notes:
+- validation and test always use the original datamodule splits
+- synthetic mode reads from `results/<track>/<dataset>/<gen_model>/<run_id>/generator_datas/`
+
+## `run_all.sh`
+
+Purpose:
+- proof-of-concept full pipeline for `CMAPSS`
+
+Exact usage:
+
+```bash
+./run_all.sh
+```
+
+Environment overrides:
+
+```bash
+PYTHON_BIN=/home/buddhiw/miniconda3/envs/flowmatch_pdm/bin/python ./run_all.sh
+GEN_MODELS="FlowMatch COTGAN FaultDiffusion" ./run_all.sh
+DATASET=CMAPSS TRACK=engine_rul ./run_all.sh
+```
+
+Behavior:
+- runs Phase 0 baseline once
+- trains each requested generator
+- resolves the latest generator `run_id`
+- runs evaluation
+- runs synthetic-augmented classifier retraining
+- by default it is a FlowMatch-PdM CMAPSS proof-of-concept
+
+## 2. Utility Modules
+
+## `src/utils/logger_utils.py`
+
+Key APIs:
+- `SessionManager(...)`
+- `SessionManager.from_existing(...)`
+- `resolve_model_root(...)`
+- `resolve_run_dir(...)`
+- `resolve_checkpoint(...)`
+- `setup_wandb_logger(...)`
+- `JSONMetricsTracker(...)`
+
+Important current behavior:
+- run folders are `run_<timestamp>`
+- CSV logging is always on
+- W&B logging is optional via `logging.use_wandb`
+
+## `src/utils/data_helper.py`
+
+Key APIs:
+- `canonicalize_dataset_name(...)`
+- `get_dataset_config(...)`
+- `get_data_module(...)`
+
+Supported datasets:
+- `CMAPSS`
+- `N-CMAPSS`
+- `FEMTO`
+- `XJTU-SY`
+- `CWRU`
+- `Paderborn`
+- `DEMADICS`
+
+## 3. Dataset Modules
+
+## `datasets/rul_data_loader.py`
+
+Supported:
+- `CMAPSS`
+- `N-CMAPSS`
+- `FEMTO`
+- `XJTU-SY`
+
+Current guarantees:
+- windows returned as `[batch, window, features]`
+- `setup("fit")` maps `dev -> train` and `val -> validation`
+- minority extraction uses `target <= 0.2 * max_rul`
+
+## `datasets/cwru_data_loader.py`
+
+Current contract:
+- loads `datasets/processed/cwru/*.npy`
+- windows are `(2048, 1)`
+- labels are `torch.int64`
+- minority extraction is smallest train class
+
+## `datasets/paderborn_data_loader.py`
+
+Current contract:
+- loads `datasets/processed/paderborn/*.npy`
+- windows are `(4096, 1)`
+- labels are `torch.int64`
+- minority extraction is smallest train class
+
+## `datasets/demadics_data_loader.py`
+
+Current contract:
+- loads `datasets/processed/demadics/*.npy`
+- windows are `(2048, 32)`
+- labels are `torch.int64`
+- minority extraction is smallest train class
+
+## 4. Model Modules
+
+## `src/classifier.py`
+
+Contains:
+- `LSTMRegressor`
+- `CNN1DClassifier`
+
+Important current behavior:
+- `CNN1DClassifier` now handles multi-channel inputs correctly
+- both models expose a valid forward path for the top-level scripts
+- both models are loadable from saved `.ckpt` files
+- both models expose feature extraction needed by evaluation, directly or indirectly
+
+## `src/baselines.py`
+
+Contains:
+- `ClassicalAugmenter`
+- `TimeVAE`
+- `TimeGAN`
+- `DiffusionTS`
+- `FaultDiffusion`
+- `TimeFlow`
+- `COTGAN`
+
+Important current behavior:
+- every generator exposes `generate(...)`
+- `TimeGAN` and `COTGAN` use manual optimization
+- `FaultDiffusion` is the sequence-diffusion baseline used for long bearing windows
+
+## `src/evaluation.py`
+
+Contains:
+- `TimeSeriesEvaluator`
+- `RealSyntheticGRU`
+- `NextStepGRU`
+
+Current outputs:
+- `metrics.txt`
+- `metrics.json`
+- `projection_pca_tsne.png`
+- `marginal_kde.png`
+
+## 5. Notebook Reference
+
+## `notebooks/01_dataset_analysis.ipynb`
+
+Purpose:
+- rebuild DEMADICS processed arrays if needed
+- verify one training batch from every supported dataset
+- validate dtype, tensor shape, and minority subset size
+
+Run it before large training cycles when dataset preprocessing changes.

@@ -1,197 +1,188 @@
-import os
 import argparse
-import yaml
-import torch
+from pathlib import Path
+from typing import Tuple
+
 import numpy as np
-import pytorch_lightning as pl
+import torch
+import yaml
 
-from src.utils.data_helper import get_data_module
-from src.evaluation import TimeSeriesEvaluator
-from src.baselines import TimeGAN, TimeVAE, DiffusionTS, TimeFlow
-from src.classifier import CNN1DClassifier, LSTMRegressor
 from flowmatchPdM.flowmatch_pdm import FlowMatchPdM
-
-def load_generator(model_name, checkpoint_path, input_dim, window_size, config):
-    """Dynamically loads the trained generator weights."""
-    print(f"Loading {model_name} from {checkpoint_path}...")
-    
-    if model_name == "TimeVAE":
-        return TimeVAE.load_from_checkpoint(checkpoint_path, input_dim=input_dim, window_size=window_size)
-    elif model_name == "TimeGAN":
-        return TimeGAN.load_from_checkpoint(checkpoint_path, input_dim=input_dim, window_size=window_size)
-    elif model_name == "DiffusionTS":
-        return DiffusionTS.load_from_checkpoint(checkpoint_path, input_dim=input_dim, window_size=window_size)
-    elif model_name == "TimeFlow":
-        return TimeFlow.load_from_checkpoint(checkpoint_path, input_dim=input_dim, window_size=window_size)
-    elif model_name == "FlowMatch":
-        return FlowMatchPdM.load_from_checkpoint(checkpoint_path, input_dim=input_dim, window_size=window_size, config=config)
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+from src.baselines import COTGAN, DiffusionTS, FaultDiffusion, TimeFlow, TimeGAN, TimeVAE
+from src.classifier import CNN1DClassifier, LSTMRegressor
+from src.evaluation import TimeSeriesEvaluator
+from src.utils.data_helper import get_data_module, get_dataset_config
+from src.utils.logger_utils import SessionManager, resolve_checkpoint
 
 
-def load_classifier(model_name, checkpoint_path):
-    """Loads trained baseline classifier/regressor checkpoints."""
-    print(f"Loading {model_name} from {checkpoint_path}...")
+GENERATOR_CHOICES = ["TimeVAE", "TimeGAN", "DiffusionTS", "TimeFlow", "COTGAN", "FaultDiffusion", "FlowMatch"]
+GENERATOR_CONFIG_MAP = {
+    "TimeVAE": "timevae",
+    "TimeGAN": "timegan",
+    "DiffusionTS": "diffusion",
+    "TimeFlow": "timeflow",
+    "COTGAN": "cotgan",
+    "FaultDiffusion": "faultdiffusion",
+    "FlowMatch": "flowmatch_pdm",
+}
 
-    if model_name == "CNN1DClassifier":
-        return CNN1DClassifier.load_from_checkpoint(checkpoint_path)
-    elif model_name == "LSTMRegressor":
-        return LSTMRegressor.load_from_checkpoint(checkpoint_path)
-    else:
-        raise ValueError(f"Unknown classifier model: {model_name}")
 
-
-def _get_minority_dataset(dm, rul_threshold):
-    """Compatibility helper for RUL vs bearing data modules."""
+def _get_minority_dataset(dm, rul_threshold_ratio: float):
     try:
-        return dm.get_minority_dataset(rul_threshold_ratio=rul_threshold)
+        return dm.get_minority_dataset(rul_threshold_ratio=rul_threshold_ratio)
     except TypeError:
         return dm.get_minority_dataset()
 
+
+def _collect_dataset_arrays(dataset) -> Tuple[np.ndarray, np.ndarray]:
+    xs = []
+    ys = []
+    for x, y in dataset:
+        xs.append(x.detach().cpu().numpy())
+        if torch.is_tensor(y):
+            ys.append(y.detach().cpu().numpy())
+        else:
+            ys.append(np.asarray(y))
+
+    x_array = np.stack(xs).astype(np.float32)
+    y_array = np.stack(ys)
+    return x_array, y_array
+
+
+def _load_generator(model_name: str, checkpoint_path: Path, input_dim: int, window_size: int, config: dict):
+    if model_name == "TimeVAE":
+        return TimeVAE.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size)
+    if model_name == "TimeGAN":
+        return TimeGAN.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size)
+    if model_name == "DiffusionTS":
+        return DiffusionTS.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size)
+    if model_name == "TimeFlow":
+        return TimeFlow.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size)
+    if model_name == "COTGAN":
+        return COTGAN.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size)
+    if model_name == "FaultDiffusion":
+        return FaultDiffusion.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size)
+    if model_name == "FlowMatch":
+        return FlowMatchPdM.load_from_checkpoint(
+            str(checkpoint_path),
+            input_dim=input_dim,
+            window_size=window_size,
+            config=config["generative"]["flowmatch_pdm"],
+        )
+    raise ValueError(f"Unsupported generator model: {model_name}")
+
+
+def _load_reference_model(track: str, dataset: str):
+    reference_model_name = "LSTMRegressor" if "rul" in track else "CNN1DClassifier"
+    reference_session = SessionManager.from_existing(track, dataset, reference_model_name)
+    checkpoint_path = resolve_checkpoint(Path(reference_session.paths["root"]), "best_model_classifier")
+    if reference_model_name == "LSTMRegressor":
+        model = LSTMRegressor.load_from_checkpoint(str(checkpoint_path))
+    else:
+        model = CNN1DClassifier.load_from_checkpoint(str(checkpoint_path))
+    model.eval()
+    return reference_model_name, reference_session, checkpoint_path, model
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Phase 3: Generate Data and Run Thorough Evaluation")
-    parser.add_argument("--track", type=str, required=True, help="engine_rul, bearing_rul, bearing_fault")
-    parser.add_argument("--dataset", type=str, required=True, help="CMAPSS, CWRU, etc.")
-    parser.add_argument(
-        "--model",
-        type=str,
-        required=True,
-        help="Generator: TimeGAN/TimeVAE/DiffusionTS/TimeFlow/FlowMatch or Baseline: CNN1DClassifier/LSTMRegressor",
-    )
-    parser.add_argument("--run_id", type=str, required=True, help="Specific run folder, e.g., run1_20260308_1427")
+    parser = argparse.ArgumentParser(description="Phase 3: generate synthetic arrays and run the evaluation suite.")
+    parser.add_argument("--track", type=str, required=True, help="engine_rul, bearing_rul, or bearing_fault")
+    parser.add_argument("--dataset", type=str, required=True, help="CMAPSS, FEMTO, CWRU, etc.")
+    parser.add_argument("--model", "--gen_model", dest="model", type=str, required=True, choices=GENERATOR_CHOICES)
+    parser.add_argument("--run_id", type=str, default=None, help="Generator run identifier. Defaults to latest.")
+    parser.add_argument("--config", type=str, default=None, help="Optional fallback config path.")
     args = parser.parse_args()
 
-    generator_models = {"TimeGAN", "TimeVAE", "DiffusionTS", "TimeFlow", "FlowMatch"}
-    classifier_models = {"CNN1DClassifier", "LSTMRegressor"}
+    generator_session = SessionManager.from_existing(args.track, args.dataset, args.model, run_id=args.run_id)
+    run_root = Path(generator_session.paths["root"])
+    config_path = Path(generator_session.config_path if generator_session.config_path.exists() else args.config)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Unable to locate configuration for evaluation: {config_path}")
 
-    if args.model not in generator_models and args.model not in classifier_models:
-        allowed = sorted(generator_models | classifier_models)
-        raise ValueError(f"Unknown model '{args.model}'. Allowed: {allowed}")
+    with config_path.open("r", encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
 
-    # 1. Locate the Run Directory
-    run_dir = os.path.join("results", args.track, args.dataset, args.model, args.run_id)
-    if not os.path.exists(run_dir):
-        raise FileNotFoundError(f"Run directory not found: {run_dir}")
-
-    # Load the exact config used for this run
-    config_path = os.path.join(run_dir, "run_configs.yaml")
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-
-    # Output paths
-    gen_data_dir = os.path.join(run_dir, "generator_datas")
-    eval_dir = os.path.join(run_dir, "evaluation_results")
-    if args.model in classifier_models:
-        ckpt_dir = os.path.join(run_dir, "best_model_classifier")
-    else:
-        ckpt_dir = os.path.join(run_dir, "best_models_generator")
-
-    os.makedirs(eval_dir, exist_ok=True)
-    os.makedirs(gen_data_dir, exist_ok=True)
-
-    # Find the .ckpt file
-    if not os.path.exists(ckpt_dir):
-        raise FileNotFoundError(f"Checkpoint directory not found: {ckpt_dir}")
-
-    ckpt_files = [f for f in os.listdir(ckpt_dir) if f.endswith('.ckpt')]
-    if not ckpt_files:
-        raise FileNotFoundError(f"No checkpoint found in {ckpt_dir}")
-    checkpoint_path = os.path.join(ckpt_dir, ckpt_files[0])
-
-    # ----------------------------------------------------------------------
-    # Phase 0/1 Baseline Evaluation (No synthetic generation)
-    # ----------------------------------------------------------------------
-    if args.model in classifier_models:
-        print("\n[Eval] Baseline classifier/regressor evaluation mode detected.")
-
-        model = load_classifier(args.model, checkpoint_path)
-
-        window_size = config['datasets']['window_size_engine'] if 'rul' in args.track else config['datasets']['window_size_bearing']
-        is_lstm = args.model == "LSTMRegressor"
-        batch_size = config['classifier']['lstm']['batch_size'] if is_lstm else config['classifier']['cnn1d']['batch_size']
-
-        dm = get_data_module(
-            track=args.track,
-            dataset_name=args.dataset,
-            window_size=window_size,
-            batch_size=batch_size,
-        )
-
-        # Use a single device for deterministic, non-duplicated baseline test metrics.
-        accelerator = config['trainer']['accelerator']
-        precision = config['trainer']['precision'] if accelerator != 'cpu' else '32-true'
-        trainer = pl.Trainer(
-            accelerator=accelerator,
-            devices=1,
-            precision=precision,
-            logger=False,
-        )
-
-        test_results = trainer.test(model=model, datamodule=dm)
-        metrics_out = os.path.join(eval_dir, "baseline_test_metrics.yaml")
-        with open(metrics_out, "w") as f:
-            yaml.safe_dump({"results": test_results}, f, sort_keys=False)
-
-        print(f"✅ Baseline evaluation complete. Metrics saved to {metrics_out}")
-        return
-
-    # 2. Extract Real Minority Data
-    window_size = config['datasets']['window_size_engine'] if 'rul' in args.track else config['datasets']['window_size_bearing']
-    input_dim = 14 if args.track == "engine_rul" else (2 if args.track == "bearing_rul" else 1)
-    
-    dm = get_data_module(track=args.track, dataset_name=args.dataset, window_size=window_size, batch_size=256)
+    dataset_cfg = get_dataset_config(config, args.dataset)
+    dm = get_data_module(
+        track=args.track,
+        dataset_name=args.dataset,
+        window_size=dataset_cfg["window_size"],
+        batch_size=config.get("evaluation", {}).get("batch_size", 128),
+    )
     dm.prepare_data()
-    dm.setup(stage='fit')
-    
-    minority_ds = _get_minority_dataset(dm, config['datasets']['rul_threshold'])
-    
-    # Collate real data into a single numpy array for evaluation
-    print(f"Extracting real minority data for evaluation...")
-    real_data_list = []
-    conditions_list = []
-    for x, y in minority_ds:
-        real_data_list.append(x.numpy())
-        conditions_list.append(y.numpy())
-    
-    real_data = np.stack(real_data_list)
-    conditions = torch.tensor(np.stack(conditions_list)).float()
-    
-    num_samples = len(real_data)
-    print(f"Real data shape: {real_data.shape}")
+    dm.setup(stage="fit")
 
-    # 3. Load Model & Generate Synthetic Data
-    model = load_generator(args.model, checkpoint_path, input_dim, window_size, config['generative'].get('ss_flowmatch', {}))
-    model.eval()
+    minority_ds = _get_minority_dataset(dm, config["datasets"]["minority_rul_ratio"])
+    real_data, real_targets = _collect_dataset_arrays(minority_ds)
+    sample_x, _ = dm.train_ds[0]
+    input_dim = int(sample_x.shape[-1])
+    window_size = int(dataset_cfg["window_size"])
+
+    manifest = {}
+    manifest_path = run_root / "run_manifest.json"
+    if manifest_path.exists():
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+
+    checkpoint_path = Path(manifest.get("best_model_path", "")) if manifest.get("best_model_path") else resolve_checkpoint(run_root, "best_models_generator")
+    generator = _load_generator(args.model, checkpoint_path, input_dim, window_size, config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+    generator.eval().to(device)
 
-    print(f"\n⚙️ Generating {num_samples} synthetic samples using {args.model}...")
+    conditions = torch.tensor(real_targets, dtype=torch.float32, device=device)
+    if conditions.dim() == 1:
+        conditions = conditions.unsqueeze(-1)
+
     with torch.no_grad():
         if args.model == "FlowMatch":
-            # FlowMatch specifically requires the physics conditions (e.g., RUL) to drive the Harmonic Prior
-            cond_input = conditions.unsqueeze(-1).to(device) if conditions.dim() == 1 else conditions.to(device)
-            synthetic_tensor = model.generate(conditions=cond_input, num_samples=num_samples)
+            synthetic = generator.generate(conditions=conditions, num_samples=len(real_data))
         else:
-            # Standard baselines just take num_samples
-            synthetic_tensor = model.generate(num_samples=num_samples)
-            
-    synthetic_data = synthetic_tensor.cpu().numpy()
-    
-    # Save the synthetic arrays so you don't have to re-generate them later
-    syn_save_path = os.path.join(gen_data_dir, "synthetic_data.npy")
-    real_save_path = os.path.join(gen_data_dir, "real_minority_data.npy")
-    np.save(syn_save_path, synthetic_data)
-    np.save(real_save_path, real_data)
-    print(f"💾 Saved raw synthetic and real data arrays to {gen_data_dir}")
+            synthetic = generator.generate(num_samples=len(real_data), conditions=conditions)
+    synthetic_data = synthetic.detach().cpu().numpy().astype(np.float32)
 
-    # 4. Execute the Thorough Evaluation Suite
+    generator_session.save_numpy("generator_datas/synthetic_data.npy", synthetic_data)
+    generator_session.save_numpy("generator_datas/synthetic_targets.npy", real_targets)
+    generator_session.save_numpy("generator_datas/real_minority_data.npy", real_data)
+    generator_session.save_numpy("generator_datas/real_minority_targets.npy", real_targets)
+
+    reference_model_name, reference_session, reference_ckpt, reference_model = _load_reference_model(args.track, args.dataset)
     evaluator = TimeSeriesEvaluator(
-        real_data=real_data, 
-        synthetic_data=synthetic_data, 
-        save_dir=eval_dir
+        real_data=real_data,
+        synthetic_data=synthetic_data,
+        save_dir=str(generator_session.paths["evaluation_results"]),
+        feature_extractor=reference_model,
+        batch_size=config.get("evaluation", {}).get("batch_size", 128),
+        max_samples=config.get("evaluation", {}).get("max_samples", 2048),
+        discriminative_epochs=config.get("evaluation", {}).get("discriminative_epochs", 20),
+        predictive_epochs=config.get("evaluation", {}).get("predictive_epochs", 20),
     )
-    
-    evaluator.run_full_suite()
+    metrics = evaluator.run_full_suite()
+
+    generator_session.write_json(
+        "generator_datas/generation_manifest.json",
+        {
+            "generator_model": args.model,
+            "generator_run_id": generator_session.run_id,
+            "generator_checkpoint": str(checkpoint_path),
+            "reference_model": reference_model_name,
+            "reference_run_id": reference_session.run_id,
+            "reference_checkpoint": str(reference_ckpt),
+            "num_generated_samples": int(len(synthetic_data)),
+            "window_size": window_size,
+            "input_dim": input_dim,
+        },
+    )
+    generator_session.update_manifest(
+        {
+            "evaluation_complete": True,
+            "generator_checkpoint": str(checkpoint_path),
+            "reference_model": reference_model_name,
+            "reference_checkpoint": str(reference_ckpt),
+            "evaluation_metrics": metrics,
+        }
+    )
+
+    print(f"[Phase 3] Synthetic arrays saved under {generator_session.paths['generator_datas']}")
+    print(f"[Phase 3] Evaluation saved under {generator_session.paths['evaluation_results']}")
+
 
 if __name__ == "__main__":
     main()

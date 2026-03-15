@@ -1,255 +1,312 @@
-# src/evaluation.py
-import os
+import json
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import numpy as np
 from scipy.linalg import sqrtm
-from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, mean_absolute_error
-import matplotlib.pyplot as plt
-import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, TensorDataset
 
-# ==============================================================================
-# Ad-Hoc Networks for Discriminative and Predictive Scores
-# ==============================================================================
-class RNNClassifier(nn.Module):
-    """Simple GRU used to distinguish Real vs Synthetic data."""
-    def __init__(self, input_dim, hidden_dim=32):
+
+class RealSyntheticGRU(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int = 64):
         super().__init__()
-        self.rnn = nn.GRU(input_dim, hidden_dim, batch_first=True)
-        self.linear = nn.Linear(hidden_dim, 1)
-        self.sigmoid = nn.Sigmoid()
+        self.gru = nn.GRU(input_dim, hidden_dim, num_layers=2, batch_first=True, dropout=0.1)
+        self.head = nn.Linear(hidden_dim, 1)
 
-    def forward(self, x):
-        _, h = self.rnn(x)
-        return self.sigmoid(self.linear(h[-1]))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        hidden, _ = self.gru(x)
+        return self.head(hidden[:, -1])
 
-class RNNPredictor(nn.Module):
-    """Simple GRU used to predict the next time step (TSTR metric)."""
-    def __init__(self, input_dim, hidden_dim=32):
+
+class NextStepGRU(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int = 64):
         super().__init__()
-        self.rnn = nn.GRU(input_dim, hidden_dim, batch_first=True)
-        self.linear = nn.Linear(hidden_dim, input_dim)
+        self.gru = nn.GRU(input_dim, hidden_dim, num_layers=2, batch_first=True, dropout=0.1)
+        self.head = nn.Linear(hidden_dim, input_dim)
 
-    def forward(self, x):
-        out, _ = self.rnn(x)
-        return self.linear(out[:, -1, :])
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        hidden, _ = self.gru(x)
+        return self.head(hidden)
 
-# ==============================================================================
-# Master Evaluator Class
-# ==============================================================================
+
 class TimeSeriesEvaluator:
-    """
-    Comprehensive evaluation suite for synthetic time-series data.
-    Implements the 5 gold-standard metrics for Generative Time Series.
-    """
-    def __init__(self, real_data: np.ndarray, synthetic_data: np.ndarray, save_dir: str):
-        self.real_data = real_data
-        self.synthetic_data = synthetic_data
-        self.save_dir = save_dir
+    def __init__(
+        self,
+        real_data: np.ndarray,
+        synthetic_data: np.ndarray,
+        save_dir: str,
+        feature_extractor: Optional[nn.Module] = None,
+        batch_size: int = 128,
+        max_samples: int = 2048,
+        discriminative_epochs: int = 20,
+        predictive_epochs: int = 20,
+    ):
+        self.real_data = np.asarray(real_data, dtype=np.float32)
+        self.synthetic_data = np.asarray(synthetic_data, dtype=np.float32)
+        self.feature_extractor = feature_extractor
+        self.batch_size = batch_size
+        self.max_samples = max_samples
+        self.discriminative_epochs = discriminative_epochs
+        self.predictive_epochs = predictive_epochs
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Ensure dimensions match
-        assert self.real_data.shape == self.synthetic_data.shape, "Real and Synthetic datasets must have the same shape."
-        self.N, self.window_size, self.input_dim = self.real_data.shape
-        
-        # Flatten for spatial/statistical analysis: (N, Window * Features)
-        self.real_flat = real_data.reshape(self.N, -1)
-        self.syn_flat = synthetic_data.reshape(self.N, -1)
 
-    # --------------------------------------------------------------------------
-    # 1. Fréchet Time Series Distance (FTSD)
-    # --------------------------------------------------------------------------
-    def calculate_ftsd(self, real_features: np.ndarray = None, synthetic_features: np.ndarray = None) -> float:
-        """
-        Calculates FTSD. If deep features aren't provided, falls back to raw flattened sequences.
-        """
-        r_feats = real_features if real_features is not None else self.real_flat
-        s_feats = synthetic_features if synthetic_features is not None else self.syn_flat
-        
-        mu_r, sigma_r = r_feats.mean(axis=0), np.cov(r_feats, rowvar=False)
-        mu_s, sigma_s = s_feats.mean(axis=0), np.cov(s_feats, rowvar=False)
+        if self.real_data.ndim != 3 or self.synthetic_data.ndim != 3:
+            raise ValueError("Expected 3D arrays with shape [batch, window, features].")
 
-        ssdiff = np.sum((mu_r - mu_s)**2.0)
-        covmean = sqrtm(sigma_r.dot(sigma_s))
-        
+        limit = min(len(self.real_data), len(self.synthetic_data), self.max_samples)
+        self.real_data = self.real_data[:limit]
+        self.synthetic_data = self.synthetic_data[:limit]
+        self.n_samples, self.window_size, self.input_dim = self.real_data.shape
+
+        self.real_flat = self.real_data.reshape(self.n_samples, -1)
+        self.synthetic_flat = self.synthetic_data.reshape(self.n_samples, -1)
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+
+    def _tensor_loader(self, array: np.ndarray, shuffle: bool = False) -> DataLoader:
+        tensor = torch.from_numpy(array.astype(np.float32))
+        return DataLoader(TensorDataset(tensor), batch_size=self.batch_size, shuffle=shuffle)
+
+    def _extract_deep_features(self, array: np.ndarray) -> np.ndarray:
+        if self.feature_extractor is None:
+            return array.reshape(len(array), -1)
+
+        model = self.feature_extractor.to(self.device)
+        model.eval()
+        outputs = []
+        with torch.no_grad():
+            for (batch,) in self._tensor_loader(array):
+                batch = batch.to(self.device)
+                if hasattr(model, "extract_features"):
+                    feats = model.extract_features(batch)
+                else:
+                    feats = model(batch)
+                outputs.append(feats.detach().cpu().reshape(batch.size(0), -1).numpy())
+        return np.concatenate(outputs, axis=0)
+
+    def _stable_covariance(self, features: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        mean = np.mean(features, axis=0)
+        cov = np.cov(features, rowvar=False)
+        cov = np.atleast_2d(cov)
+        cov += np.eye(cov.shape[0], dtype=np.float64) * 1e-6
+        return mean.astype(np.float64), cov.astype(np.float64)
+
+    def calculate_ftsd(self, real_features: np.ndarray, synthetic_features: np.ndarray) -> float:
+        mu_r, cov_r = self._stable_covariance(real_features)
+        mu_s, cov_s = self._stable_covariance(synthetic_features)
+        mean_term = np.sum((mu_r - mu_s) ** 2)
+        covmean = sqrtm(cov_r @ cov_s)
         if np.iscomplexobj(covmean):
             covmean = covmean.real
+        return float(mean_term + np.trace(cov_r + cov_s - 2.0 * covmean))
 
-        ftsd = ssdiff + np.trace(sigma_r + sigma_s - 2.0 * covmean)
-        return float(ftsd)
+    def calculate_mmd(self) -> float:
+        x = torch.from_numpy(self.real_flat)
+        y = torch.from_numpy(self.synthetic_flat)
+        combined = torch.cat([x, y], dim=0)
+        distances = torch.cdist(combined, combined, p=2).pow(2)
+        positive_distances = distances[distances > 0]
+        median = torch.tensor(1.0) if positive_distances.numel() == 0 else torch.median(positive_distances)
+        bandwidth = torch.clamp(median, min=1e-6)
 
-    # --------------------------------------------------------------------------
-    # 2. Maximum Mean Discrepancy (MMD)
-    # --------------------------------------------------------------------------
-    def calculate_mmd(self, kernel_mul=2.0, kernel_num=5):
-        """Measures the distance between distributions using RBF kernels."""
-        limit = min(2000, len(self.real_flat)) # Memory cap
-        X = torch.tensor(self.real_flat[:limit], dtype=torch.float32)
-        Y = torch.tensor(self.syn_flat[:limit], dtype=torch.float32)
-        
-        xx, yy, zz = torch.mm(X, X.t()), torch.mm(Y, Y.t()), torch.mm(X, Y.t())
-        rx = (xx.diag().unsqueeze(0).expand_as(xx))
-        ry = (yy.diag().unsqueeze(0).expand_as(yy))
-        
-        dxx, dyy, dxy = rx.t() + rx - 2. * xx, ry.t() + ry - 2. * yy, rx.t() + ry - 2. * zz
-        
-        bandwidths = [kernel_mul ** i for i in range(kernel_num)]
-        XX, YY, XY = torch.zeros_like(xx), torch.zeros_like(yy), torch.zeros_like(zz)
-        
-        for a in bandwidths:
-            XX += torch.exp(-0.5 * dxx / a)
-            YY += torch.exp(-0.5 * dyy / a)
-            XY += torch.exp(-0.5 * dxy / a)
-            
-        mmd = torch.mean(XX + YY - 2. * XY)
-        return mmd.item()
+        k_xx = torch.exp(-torch.cdist(x, x, p=2).pow(2) / (2.0 * bandwidth))
+        k_yy = torch.exp(-torch.cdist(y, y, p=2).pow(2) / (2.0 * bandwidth))
+        k_xy = torch.exp(-torch.cdist(x, y, p=2).pow(2) / (2.0 * bandwidth))
 
-    # --------------------------------------------------------------------------
-    # 3. Discriminative Score (Post-hoc Classifier)
-    # --------------------------------------------------------------------------
-    def calculate_discriminative_score(self, epochs=30):
-        """
-        Trains an RNN to distinguish real vs. synthetic. 
-        Score = |0.5 - Accuracy|. Lower is better (0 means perfectly indistinguishable).
-        """
-        print("[Evaluator] Computing Discriminative Score...")
-        X = np.vstack([self.real_data, self.synthetic_data])
-        y = np.array([1]*self.N + [0]*self.N) # 1: Real, 0: Synthetic
-        
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        
-        X_train_t = torch.tensor(X_train, dtype=torch.float32).to(self.device)
-        y_train_t = torch.tensor(y_train, dtype=torch.float32).view(-1, 1).to(self.device)
-        X_test_t = torch.tensor(X_test, dtype=torch.float32).to(self.device)
-        
-        model = RNNClassifier(input_dim=self.input_dim).to(self.device)
-        optimizer = optim.Adam(model.parameters(), lr=1e-3)
-        criterion = nn.BCELoss()
-        
+        n = x.size(0)
+        m = y.size(0)
+        mmd = (
+            (k_xx.sum() - torch.diagonal(k_xx).sum()) / max(n * (n - 1), 1)
+            + (k_yy.sum() - torch.diagonal(k_yy).sum()) / max(m * (m - 1), 1)
+            - 2.0 * k_xy.mean()
+        )
+        return float(max(mmd.item(), 0.0))
+
+    def calculate_discriminative_score(self) -> Tuple[float, float]:
+        x = np.concatenate([self.real_data, self.synthetic_data], axis=0)
+        y = np.concatenate([np.ones(len(self.real_data)), np.zeros(len(self.synthetic_data))], axis=0)
+
+        x_train, x_test, y_train, y_test = train_test_split(
+            x,
+            y,
+            test_size=0.2,
+            random_state=42,
+            stratify=y,
+        )
+
+        model = RealSyntheticGRU(self.input_dim).to(self.device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        criterion = nn.BCEWithLogitsLoss()
+
+        train_loader = DataLoader(
+            TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train.astype(np.float32))),
+            batch_size=self.batch_size,
+            shuffle=True,
+        )
+        test_loader = DataLoader(
+            TensorDataset(torch.from_numpy(x_test), torch.from_numpy(y_test.astype(np.float32))),
+            batch_size=self.batch_size,
+            shuffle=False,
+        )
+
         model.train()
-        for _ in range(epochs):
-            optimizer.zero_grad()
-            preds = model(X_train_t)
-            loss = criterion(preds, y_train_t)
-            loss.backward()
-            optimizer.step()
-            
-        model.eval()
-        with torch.no_grad():
-            test_preds = torch.round(model(X_test_t)).cpu().numpy()
-            
-        acc = accuracy_score(y_test, test_preds)
-        score = abs(0.5 - acc)
-        return score, acc
+        for _ in range(self.discriminative_epochs):
+            for batch_x, batch_y in train_loader:
+                batch_x = batch_x.to(self.device)
+                batch_y = batch_y.to(self.device).unsqueeze(-1)
+                optimizer.zero_grad()
+                logits = model(batch_x)
+                loss = criterion(logits, batch_y)
+                loss.backward()
+                optimizer.step()
 
-    # --------------------------------------------------------------------------
-    # 4. Predictive Score (Train on Synthetic, Test on Real)
-    # --------------------------------------------------------------------------
-    def calculate_predictive_score(self, epochs=30):
-        """
-        TSTR metric: Predicts step t+1 given 0..t.
-        Trains on Synthetic data, evaluates MAE on Real data. Lower is better.
-        """
-        print("[Evaluator] Computing Predictive Score (TSTR)...")
-        # Task: use X[:, :-1, :] to predict X[:, -1, :]
-        X_syn, Y_syn = self.synthetic_data[:, :-1, :], self.synthetic_data[:, -1, :]
-        X_real, Y_real = self.real_data[:, :-1, :], self.real_data[:, -1, :]
-        
-        X_syn_t = torch.tensor(X_syn, dtype=torch.float32).to(self.device)
-        Y_syn_t = torch.tensor(Y_syn, dtype=torch.float32).to(self.device)
-        X_real_t = torch.tensor(X_real, dtype=torch.float32).to(self.device)
-        
-        model = RNNPredictor(input_dim=self.input_dim).to(self.device)
-        optimizer = optim.Adam(model.parameters(), lr=1e-3)
-        criterion = nn.L1Loss() # MAE
-        
+        model.eval()
+        preds = []
+        targets = []
+        with torch.no_grad():
+            for batch_x, batch_y in test_loader:
+                logits = model(batch_x.to(self.device))
+                preds.append((torch.sigmoid(logits) >= 0.5).cpu().numpy())
+                targets.append(batch_y.numpy())
+
+        y_pred = np.concatenate(preds, axis=0).reshape(-1)
+        y_true = np.concatenate(targets, axis=0).reshape(-1)
+        accuracy = float((y_pred == y_true).mean())
+        score = abs(0.5 - accuracy)
+        return float(score), accuracy
+
+    def calculate_predictive_score(self) -> float:
+        x_syn = self.synthetic_data[:, :-1, :]
+        y_syn = self.synthetic_data[:, 1:, :]
+        x_real = self.real_data[:, :-1, :]
+        y_real = self.real_data[:, 1:, :]
+
+        model = NextStepGRU(self.input_dim).to(self.device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        criterion = nn.L1Loss()
+
+        train_loader = DataLoader(
+            TensorDataset(torch.from_numpy(x_syn), torch.from_numpy(y_syn)),
+            batch_size=self.batch_size,
+            shuffle=True,
+        )
+        test_loader = DataLoader(
+            TensorDataset(torch.from_numpy(x_real), torch.from_numpy(y_real)),
+            batch_size=self.batch_size,
+            shuffle=False,
+        )
+
         model.train()
-        for _ in range(epochs):
-            optimizer.zero_grad()
-            preds = model(X_syn_t)
-            loss = criterion(preds, Y_syn_t)
-            loss.backward()
-            optimizer.step()
-            
-        model.eval()
-        with torch.no_grad():
-            real_preds = model(X_real_t).cpu().numpy()
-            
-        mae = mean_absolute_error(Y_real, real_preds)
-        return mae
+        for _ in range(self.predictive_epochs):
+            for batch_x, batch_y in train_loader:
+                batch_x = batch_x.to(self.device)
+                batch_y = batch_y.to(self.device)
+                optimizer.zero_grad()
+                pred = model(batch_x)
+                loss = criterion(pred, batch_y)
+                loss.backward()
+                optimizer.step()
 
-    # --------------------------------------------------------------------------
-    # 5. Visualizations (PCA, t-SNE, Distributions)
-    # --------------------------------------------------------------------------
-    def plot_pca_tsne(self):
-        """Generates rigorous 2D projections to assess manifold overlap."""
-        print("[Evaluator] Computing PCA and t-SNE projections...")
-        combined = np.vstack([self.real_flat, self.syn_flat])
-        labels = np.array([0]*self.N + [1]*self.N)
-        
-        pca_results = PCA(n_components=2).fit_transform(combined)
-        tsne_results = TSNE(n_components=2, perplexity=30, n_iter=300, random_state=42).fit_transform(combined)
-        
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-        
-        for ax, results, title in zip(axes, [pca_results, tsne_results], ['PCA Projection', 't-SNE Projection']):
-            ax.scatter(results[labels==0, 0], results[labels==0, 1], alpha=0.3, label='Real', color='blue')
-            ax.scatter(results[labels==1, 0], results[labels==1, 1], alpha=0.3, label='Synthetic', color='red')
-            ax.set_title(title)
+        model.eval()
+        errors = []
+        with torch.no_grad():
+            for batch_x, batch_y in test_loader:
+                pred = model(batch_x.to(self.device)).cpu()
+                errors.append(torch.mean(torch.abs(pred - batch_y), dim=(1, 2)).numpy())
+        return float(np.concatenate(errors).mean())
+
+    def plot_pca_tsne(self, real_features: np.ndarray, synthetic_features: np.ndarray):
+        combined = np.concatenate([real_features, synthetic_features], axis=0)
+        labels = np.concatenate([np.zeros(len(real_features)), np.ones(len(synthetic_features))], axis=0)
+        scaled = StandardScaler().fit_transform(combined)
+
+        pca = PCA(n_components=2, random_state=42).fit_transform(scaled)
+        perplexity = max(2, min(30, max(len(combined) // 8, 2), len(combined) - 1))
+        tsne = TSNE(
+            n_components=2,
+            random_state=42,
+            init="pca",
+            learning_rate="auto",
+            perplexity=perplexity,
+        ).fit_transform(scaled)
+
+        fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+        palettes = [("Real", "#0b5d8f"), ("Synthetic", "#d95f02")]
+
+        for ax, coords, title in zip(axes, [pca, tsne], ["PCA", "t-SNE"]):
+            for label_value, (label_name, color) in enumerate(palettes):
+                mask = labels == label_value
+                ax.scatter(coords[mask, 0], coords[mask, 1], s=20, alpha=0.5, label=label_name, color=color)
+            ax.set_title(f"{title} Projection")
+            ax.set_xlabel("Component 1")
+            ax.set_ylabel("Component 2")
             ax.legend()
 
-        save_path = os.path.join(self.save_dir, "dimensionality_reduction.png")
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
+        fig.tight_layout()
+        fig.savefig(self.save_dir / "projection_pca_tsne.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
-    def plot_marginal_distributions(self):
-        """Plots KDE for a random feature to verify statistical overlap."""
-        print("[Evaluator] Plotting marginal distributions...")
-        # Select the first feature of the final timestep as a representative sample
-        real_feat = self.real_data[:, -1, 0]
-        syn_feat = self.synthetic_data[:, -1, 0]
-        
-        plt.figure(figsize=(8, 6))
-        sns.kdeplot(real_feat, label='Real Data', color='blue', fill=True, alpha=0.3)
-        sns.kdeplot(syn_feat, label='Synthetic Data', color='red', fill=True, alpha=0.3)
-        plt.title('Kernel Density Estimation: Real vs Synthetic (Feature 0, Last Timestep)')
-        plt.legend()
-        
-        save_path = os.path.join(self.save_dir, "marginal_distributions.png")
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
+    def plot_marginal_kde(self):
+        feature_count = min(4, self.input_dim)
+        fig, axes = plt.subplots(1, feature_count, figsize=(5 * feature_count, 4.5), squeeze=False)
+        axes = axes.reshape(-1)
 
-    # --------------------------------------------------------------------------
-    # Execution
-    # --------------------------------------------------------------------------
-    def run_full_suite(self, real_features=None, synthetic_features=None):
-        print("\n" + "="*50)
-        print("🔍 Commencing Comprehensive Synthetic Data Evaluation")
-        print("="*50)
-        
-        ftsd_score = self.calculate_ftsd(real_features, synthetic_features)
-        mmd_score = self.calculate_mmd()
-        disc_score, disc_acc = self.calculate_discriminative_score()
-        pred_score = self.calculate_predictive_score()
-        
-        self.plot_pca_tsne()
-        self.plot_marginal_distributions()
-        
-        report = (
-            f"--- EVALUATION METRICS ---\n"
-            f"Fréchet Time Series Distance (FTSD): {ftsd_score:.4f} \n"
-            f"Maximum Mean Discrepancy (MMD):      {mmd_score:.4f} \n"
-            f"Discriminative Score (|0.5 - Acc|):  {disc_score:.4f} (Accuracy: {disc_acc:.4f})\n"
-            f"Predictive Score (TSTR MAE):         {pred_score:.4f} \n"
+        for feature_idx in range(feature_count):
+            real_feature = self.real_data[:, :, feature_idx].reshape(-1)
+            synthetic_feature = self.synthetic_data[:, :, feature_idx].reshape(-1)
+            sns.kdeplot(real_feature, ax=axes[feature_idx], label="Real", color="#0b5d8f", fill=True, alpha=0.25)
+            sns.kdeplot(
+                synthetic_feature,
+                ax=axes[feature_idx],
+                label="Synthetic",
+                color="#d95f02",
+                fill=True,
+                alpha=0.25,
+            )
+            axes[feature_idx].set_title(f"Feature {feature_idx}")
+            axes[feature_idx].set_xlabel("Value")
+            axes[feature_idx].set_ylabel("Density")
+            axes[feature_idx].legend()
+
+        fig.tight_layout()
+        fig.savefig(self.save_dir / "marginal_kde.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    def run_full_suite(self) -> Dict[str, float]:
+        real_features = self._extract_deep_features(self.real_data)
+        synthetic_features = self._extract_deep_features(self.synthetic_data)
+
+        metrics = {
+            "ftsd": self.calculate_ftsd(real_features, synthetic_features),
+            "mmd_rbf": self.calculate_mmd(),
+        }
+        metrics["discriminative_score"], metrics["discriminative_accuracy"] = self.calculate_discriminative_score()
+        metrics["predictive_score_mae"] = self.calculate_predictive_score()
+
+        self.plot_pca_tsne(real_features, synthetic_features)
+        self.plot_marginal_kde()
+
+        report = "\n".join(
+            [
+                "FlowMatch-PdM Synthetic Time-Series Evaluation",
+                f"Samples compared: {self.n_samples}",
+                f"Window size: {self.window_size}",
+                f"Feature dimension: {self.input_dim}",
+                f"FTSD: {metrics['ftsd']:.6f}",
+                f"MMD (RBF): {metrics['mmd_rbf']:.6f}",
+                f"Discriminative Score: {metrics['discriminative_score']:.6f}",
+                f"Discriminative Accuracy: {metrics['discriminative_accuracy']:.6f}",
+                f"Predictive Score (TSTR MAE): {metrics['predictive_score_mae']:.6f}",
+            ]
         )
-        
-        print(f"\n{report}")
-        
-        with open(os.path.join(self.save_dir, "metrics.txt"), "w") as f:
-            f.write(report)
-            
-        print(f"✅ Evaluation complete. Plots and metrics saved to {self.save_dir}")
+        (self.save_dir / "metrics.txt").write_text(report + "\n", encoding="utf-8")
+        (self.save_dir / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return metrics

@@ -75,17 +75,28 @@ class CNN1DClassifier(pl.LightningModule):
         self._test_preds = []
         self._test_targets = []
 
-    def forward(self, x):
-        # Input shape expected: (Batch, Channels, Sequence_Length)
+    def _prepare_input(self, x):
         if x.dim() == 2:
-            x = x.unsqueeze(1)
-        elif x.shape[-1] != x.shape[1] and x.shape[1] > 10:
-            # Swap axes if input is (Batch, Seq_Len, Channels)
-            x = x.transpose(1, 2)
-            
-        features = self.feature_extractor(x)
-        features = features.squeeze(-1)
-        return self.classifier(features)
+            return x.unsqueeze(1)
+        if x.dim() != 3:
+            raise ValueError(f"Expected rank-2 or rank-3 input, received shape {tuple(x.shape)}")
+
+        expected_channels = int(self.hparams.input_channels)
+        if x.shape[1] == expected_channels:
+            return x
+        if x.shape[2] == expected_channels:
+            return x.transpose(1, 2)
+        raise ValueError(
+            f"Unable to align channels for CNN input. Expected {expected_channels} channels, "
+            f"received shape {tuple(x.shape)}."
+        )
+
+    def extract_features(self, x):
+        x = self._prepare_input(x)
+        return self.feature_extractor(x).squeeze(-1)
+
+    def forward(self, x):
+        return self.classifier(self.extract_features(x))
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -179,12 +190,13 @@ class LSTMRegressor(pl.LightningModule):
         self._test_preds = []
         self._test_targets = []
 
+    def extract_features(self, x):
+        lstm_out, _ = self.lstm(x)
+        return lstm_out[:, -1, :]
+
     def forward(self, x):
         # Input shape expected: (Batch, Sequence_Length, Features)
-        lstm_out, _ = self.lstm(x)
-        # Take the output of the last time step for RUL prediction
-        last_step_features = lstm_out[:, -1, :]
-        return self.regressor(last_step_features).squeeze(-1)
+        return self.regressor(self.extract_features(x)).squeeze(-1)
 
     def training_step(self, batch, batch_idx):
         x, y = batch
