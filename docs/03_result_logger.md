@@ -20,7 +20,7 @@ Log only successful runs here. This file is the single source of truth for basel
 
 | Dataset | Track | Primary Metric | Score | Run ID / Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **CMAPSS** | Engine RUL | RMSE (↓) |  |  |
+| **CMAPSS** | Engine RUL | RMSE (↓) | 16.523341459531764 | run_20260316_125116 |
 | **N-CMAPSS** | Engine RUL | RMSE (↓) | - | - |
 | **FEMTO** | Bearing RUL | RMSE (↓) | - | - |
 | **XJTU-SY** | Bearing RUL | RMSE (↓) | - | - |

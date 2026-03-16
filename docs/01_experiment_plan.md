@@ -27,7 +27,7 @@ Every checkbox below is meant to map to a real run folder under `results/<track>
 
 ### Engine RUL
 
-- [] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline`
+- [x] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline`
 - [ ] `python train_classifier.py --track engine_rul --dataset N-CMAPSS --model baseline`
 
 ### Bearing RUL
