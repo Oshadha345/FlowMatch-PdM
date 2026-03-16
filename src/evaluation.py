@@ -77,6 +77,7 @@ class SupervisedTaskEvaluator:
     def _collect_predictions(self, dataloader: DataLoader):
         self.model = self.model.to(self.device)
         self.model.eval()
+        target_scale = float(getattr(self.model, "target_scale", 1.0))
 
         targets = []
         predictions = []
@@ -95,8 +96,10 @@ class SupervisedTaskEvaluator:
                     predictions.append(preds.detach().cpu().numpy())
                     targets.append(y.detach().cpu().numpy())
                 else:
-                    predictions.append(outputs.detach().cpu().reshape(-1).numpy())
-                    targets.append(y.detach().cpu().float().reshape(-1).numpy())
+                    preds_real = outputs.detach().cpu().reshape(-1) * target_scale
+                    y_real = y.detach().cpu().float().reshape(-1) * target_scale
+                    predictions.append(preds_real.numpy())
+                    targets.append(y_real.numpy())
 
         y_true = np.concatenate(targets, axis=0)
         y_pred = np.concatenate(predictions, axis=0)

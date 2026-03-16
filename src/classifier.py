@@ -228,11 +228,11 @@ class LSTMRegressor(pl.LightningModule):
         y_hat = self(x)
         loss = F.huber_loss(y_hat, y.float())
 
-        scaled_preds = self._restore_scale(y_hat)
-        scaled_targets = self._restore_scale(y.float())
-        self.val_rmse(scaled_preds, scaled_targets)
-        self.val_mae(scaled_preds, scaled_targets)
-        self.val_r2(scaled_preds, scaled_targets)
+        preds_real = self._restore_scale(y_hat)
+        y_real = self._restore_scale(y.float())
+        self.val_rmse(preds_real, y_real)
+        self.val_mae(preds_real, y_real)
+        self.val_r2(preds_real, y_real)
 
         self.log('val_loss', loss, prog_bar=True, sync_dist=True)
         self.log('val_rmse', self.val_rmse, prog_bar=True, sync_dist=True)
@@ -243,8 +243,11 @@ class LSTMRegressor(pl.LightningModule):
         x, y = batch
         y_hat = self(x)
 
-        self._test_preds.append(self._restore_scale(y_hat.detach().cpu()))
-        self._test_targets.append(self._restore_scale(y.detach().cpu().float()))
+        preds_real = self._restore_scale(y_hat)
+        y_real = self._restore_scale(y.float())
+
+        self._test_preds.append(preds_real.detach().cpu())
+        self._test_targets.append(y_real.detach().cpu())
 
     def on_test_epoch_start(self):
         self._test_preds = []
