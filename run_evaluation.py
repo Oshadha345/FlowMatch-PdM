@@ -161,7 +161,7 @@ def evaluate_generator_run(
     dm = get_data_module(
         track=track,
         dataset_name=dataset,
-        fd=dataset_cfg.get("fd_list", 1),
+        conditions=dataset_cfg.get("conditions", dataset_cfg.get("fd_list", 1)),
         window_size=dataset_cfg["window_size"],
         batch_size=config.get("evaluation", {}).get("batch_size", 128),
     )
@@ -266,12 +266,12 @@ def evaluate_classifier_run(
 
     dataset_cfg = get_dataset_config(config, dataset)
     is_rul = "rul" in track
-    batch_size = config["classifier"]["lstm"]["batch_size"] if is_rul else config["classifier"]["cnn1d"]["batch_size"]
+    batch_size = int(dataset_cfg["batch_size"])
 
     dm = get_data_module(
         track=track,
         dataset_name=dataset,
-        fd=dataset_cfg.get("fd_list", 1),
+        conditions=dataset_cfg.get("conditions", dataset_cfg.get("fd_list", 1)),
         window_size=dataset_cfg["window_size"],
         batch_size=batch_size,
     )

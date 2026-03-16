@@ -1,4 +1,6 @@
 # datasets/rul_data_loader.py
+import re
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -8,12 +10,55 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 
 
-_RUL_DATASET_DEFAULTS: Dict[str, Dict[str, Optional[int]]] = {
-    "CMAPSS": {"window_size": 30, "max_rul": 125},
-    "N-CMAPSS": {"window_size": 50, "max_rul": None},
-    "FEMTO": {"window_size": 2560, "max_rul": None},
-    "XJTU-SY": {"window_size": 2048, "max_rul": None},
+_RUL_DATASET_DEFAULTS: Dict[str, Dict[str, object]] = {
+    "CMAPSS": {
+        "window_size": 30,
+        "max_rul": 125,
+        "conditions": [1, 2, 3, 4],
+    },
+    "N-CMAPSS": {
+        "window_size": 50,
+        "max_rul": None,
+        "conditions": [1, 2, 3, 4, 5, 6, 7, 8],
+    },
+    "FEMTO": {
+        "window_size": 2560,
+        "max_rul": None,
+        "conditions": [
+            "Bearing1_1",
+            "Bearing1_2",
+            "Bearing2_1",
+            "Bearing2_2",
+            "Bearing3_1",
+            "Bearing3_2",
+        ],
+    },
+    "XJTU-SY": {
+        "window_size": 2048,
+        "max_rul": None,
+        "conditions": [1, 2, 3],
+    },
 }
+
+_AVAILABLE_FDS: Dict[str, List[int]] = {
+    "CMAPSS": [1, 2, 3, 4],
+    "N-CMAPSS": [1, 2, 3, 4, 5, 6, 7],
+    "FEMTO": [1, 2, 3],
+    "XJTU-SY": [1, 2, 3],
+}
+
+_FEMTO_DEFAULT_SPLITS: Dict[int, Dict[str, List[int]]] = {
+    1: {"dev": [1, 2], "val": [3], "test": [4, 5, 6, 7]},
+    2: {"dev": [1, 2], "val": [3], "test": [4, 5, 6, 7]},
+    3: {"dev": [1], "val": [2], "test": [3]},
+}
+
+
+@dataclass(frozen=True)
+class _ReaderSpec:
+    fd: int
+    run_split_dist: Optional[Dict[str, List[int]]] = None
+    label: Optional[str] = None
 
 
 class _WindowFirstRulDataset(Dataset):
@@ -73,67 +118,169 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
     def __init__(
         self,
         dataset_name: str,
-        fd: Union[int, Sequence[int]] = 1,
+        conditions: Optional[Sequence[Union[int, str]]] = None,
+        fd: Optional[Union[int, Sequence[Union[int, str]]]] = None,
         window_size: Optional[int] = None,
-        batch_size: int = 512,
+        batch_size: int = 128,
     ):
         super().__init__()
         self.dataset_name = dataset_name.upper()
-        self.fd = self._normalize_fd_list(fd)
-        self.batch_size = batch_size
 
         defaults = self._get_dataset_defaults()
+        resolved_conditions = conditions if conditions is not None else fd
+        self.conditions = self._normalize_conditions(resolved_conditions or defaults["conditions"])
+        self.fd = self.conditions
+        self.batch_size = int(batch_size)
         self.window_size = int(window_size or defaults["window_size"])
         self.max_rul = defaults["max_rul"]
-        self.max_rul_val = 1.0
+        self.target_scale = 1.0
+        self.max_rul_val = self.target_scale
 
         self.save_hyperparameters()
 
-        self.readers = self._get_reader()
+        self.reader_specs = self._build_reader_specs()
+        self.readers = self._build_readers()
         self.rul_dms = [rul_datasets.RulDataModule(reader, batch_size=self.batch_size) for reader in self.readers]
 
         self.train_ds: Optional[Dataset] = None
         self.val_ds: Optional[Dataset] = None
         self.test_ds: Optional[Dataset] = None
 
-    def _normalize_fd_list(self, fd: Union[int, Sequence[int]]) -> List[int]:
-        if isinstance(fd, Sequence) and not isinstance(fd, (str, bytes)):
-            fd_list = [int(item) for item in fd]
-        else:
-            fd_list = [int(fd)]
-
-        fd_list = list(dict.fromkeys(fd_list))
-        if not fd_list:
-            raise ValueError("At least one RUL operating condition must be provided.")
-        return fd_list
-
-    def _get_dataset_defaults(self) -> Dict[str, Optional[int]]:
+    def _get_dataset_defaults(self) -> Dict[str, object]:
         if self.dataset_name not in _RUL_DATASET_DEFAULTS:
             raise ValueError(f"Unsupported RUL dataset: {self.dataset_name}")
         return _RUL_DATASET_DEFAULTS[self.dataset_name]
 
-    def _get_reader(self):
+    def _normalize_conditions(self, conditions: Union[int, str, Sequence[Union[int, str]]]) -> List[Union[int, str]]:
+        if isinstance(conditions, Sequence) and not isinstance(conditions, (str, bytes)):
+            raw_conditions = list(conditions)
+        else:
+            raw_conditions = [conditions]
+
+        normalized: List[Union[int, str]] = []
+        for condition in raw_conditions:
+            if isinstance(condition, str):
+                stripped = condition.strip()
+                if stripped.isdigit():
+                    normalized.append(int(stripped))
+                else:
+                    normalized.append(stripped)
+            else:
+                normalized.append(int(condition))
+
+        normalized = list(dict.fromkeys(normalized))
+        if not normalized:
+            raise ValueError("At least one RUL operating condition must be provided.")
+        return normalized
+
+    def _validate_fd_conditions(self, fds: Sequence[int]) -> List[int]:
+        available = _AVAILABLE_FDS[self.dataset_name]
+        valid = [fd for fd in fds if fd in available]
+        invalid = [fd for fd in fds if fd not in available]
+
+        if invalid:
+            print(
+                f"[{self.dataset_name}] Skipping unsupported conditions {invalid}. "
+                f"Available conditions: {available}"
+            )
+        if not valid:
+            raise ValueError(
+                f"No valid conditions supplied for {self.dataset_name}. "
+                f"Requested {list(fds)}, available {available}."
+            )
+        return valid
+
+    def _build_reader_specs(self) -> List[_ReaderSpec]:
+        if self.dataset_name != "FEMTO":
+            numeric_conditions = [int(condition) for condition in self.conditions]
+            valid_fds = self._validate_fd_conditions(numeric_conditions)
+            return [_ReaderSpec(fd=fd, label=f"FD{fd}") for fd in valid_fds]
+
+        if all(isinstance(condition, int) for condition in self.conditions):
+            valid_fds = self._validate_fd_conditions([int(condition) for condition in self.conditions])
+            return [_ReaderSpec(fd=fd, label=f"FD{fd}") for fd in valid_fds]
+
+        bearing_pattern = re.compile(r"^Bearing(?P<fd>\d+)_(?P<run>\d+)$", re.IGNORECASE)
+        grouped_runs: Dict[int, List[int]] = {}
+        labels_by_fd: Dict[int, List[str]] = {}
+
+        for condition in self.conditions:
+            if not isinstance(condition, str):
+                raise ValueError(f"Unsupported FEMTO condition type: {type(condition)!r}")
+
+            match = bearing_pattern.match(condition)
+            if match is None:
+                raise ValueError(
+                    "FEMTO conditions must be integer FD identifiers or labels like 'Bearing1_1'. "
+                    f"Received '{condition}'."
+                )
+
+            fd = int(match.group("fd"))
+            run_idx = int(match.group("run"))
+            if fd not in _FEMTO_DEFAULT_SPLITS:
+                raise ValueError(f"Unsupported FEMTO condition '{condition}'.")
+
+            grouped_runs.setdefault(fd, []).append(run_idx)
+            labels_by_fd.setdefault(fd, []).append(condition)
+
+        specs: List[_ReaderSpec] = []
+        for fd in sorted(grouped_runs):
+            selected_runs = sorted(set(grouped_runs[fd]))
+            default_splits = _FEMTO_DEFAULT_SPLITS[fd]
+
+            if any(run_idx not in sum(default_splits.values(), []) for run_idx in selected_runs):
+                raise ValueError(f"Unsupported FEMTO run selection for FD{fd}: {selected_runs}")
+
+            run_split_dist = {
+                "dev": selected_runs,
+                "val": [run_idx for run_idx in default_splits["val"] if run_idx not in selected_runs],
+                "test": list(default_splits["test"]),
+            }
+            specs.append(
+                _ReaderSpec(
+                    fd=fd,
+                    run_split_dist=run_split_dist,
+                    label=",".join(labels_by_fd[fd]),
+                )
+            )
+
+        return specs
+
+    def _build_readers(self):
         readers = []
-        for fd_idx in self.fd:
+        for spec in self.reader_specs:
             if self.dataset_name == "CMAPSS":
                 readers.append(
                     rul_datasets.CmapssReader(
-                        fd_idx,
+                        spec.fd,
                         window_size=self.window_size,
                         max_rul=int(self.max_rul) if self.max_rul is not None else None,
                     )
                 )
-                continue
-            if self.dataset_name == "N-CMAPSS":
-                readers.append(rul_datasets.NCmapssReader(fd_idx, window_size=self.window_size))
-                continue
-            if self.dataset_name == "FEMTO":
-                readers.append(rul_datasets.FemtoReader(fd_idx, window_size=self.window_size))
-                continue
-            if self.dataset_name == "XJTU-SY":
-                readers.append(rul_datasets.XjtuSyReader(fd_idx, window_size=self.window_size))
-                continue
-            raise ValueError(f"Unsupported RUL dataset: {self.dataset_name}")
+            elif self.dataset_name == "N-CMAPSS":
+                readers.append(
+                    rul_datasets.NCmapssReader(
+                        spec.fd,
+                        window_size=self.window_size,
+                    )
+                )
+            elif self.dataset_name == "FEMTO":
+                readers.append(
+                    rul_datasets.FemtoReader(
+                        spec.fd,
+                        window_size=self.window_size,
+                        run_split_dist=spec.run_split_dist,
+                    )
+                )
+            elif self.dataset_name == "XJTU-SY":
+                readers.append(
+                    rul_datasets.XjtuSyReader(
+                        spec.fd,
+                        window_size=self.window_size,
+                    )
+                )
+            else:
+                raise ValueError(f"Unsupported RUL dataset: {self.dataset_name}")
         return readers
 
     def prepare_data(self):
@@ -145,23 +292,27 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
             rul_dm.setup(stage)
 
         if stage == "fit" or stage is None:
-            self.max_rul_val = self._compute_target_scale()
+            self.target_scale = self._compute_target_scale()
+            self.max_rul_val = self.target_scale
             self.train_ds = self._wrap_split("dev")
             self.val_ds = self._wrap_split("val")
+
         if stage == "test" or stage is None:
-            if self.max_rul_val <= 0:
-                self.max_rul_val = self._compute_target_scale()
+            if self.target_scale <= 0:
+                self.target_scale = self._compute_target_scale()
+                self.max_rul_val = self.target_scale
             self.test_ds = self._wrap_split("test")
 
-    def _compute_target_scale(self) -> float:
-        for rul_dm in self.rul_dms:
-            rul_dm.setup(stage="fit")
+    def _split_is_empty(self, rul_dm, split: str) -> bool:
+        features_per_run, _ = rul_dm.data[split]
+        return not any(len(run_features) > 0 for run_features in features_per_run)
 
-        train_targets = self._flatten_split_targets("dev")
-        max_rul_val = float(train_targets.max())
-        if max_rul_val <= 0:
-            raise RuntimeError("Encountered non-positive max_rul_val while preparing scaled RUL targets.")
-        return max_rul_val
+    def _compute_target_scale(self) -> float:
+        raw_train_targets = self._flatten_split_targets("dev")
+        target_scale = float(np.max(np.abs(raw_train_targets)))
+        if target_scale <= 0:
+            raise RuntimeError("Encountered non-positive target_scale while preparing scaled RUL targets.")
+        return target_scale
 
     def _infer_split_shape(self, rul_dm, split: str) -> Tuple[int, int]:
         features_per_run, _ = rul_dm.data[split]
@@ -178,11 +329,14 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         wrapped_datasets: List[Dataset] = []
         expected_shape: Optional[Tuple[int, int]] = None
 
-        for rul_dm, fd_idx in zip(self.rul_dms, self.fd):
+        for spec, rul_dm in zip(self.reader_specs, self.rul_dms):
+            if self._split_is_empty(rul_dm, split):
+                continue
+
             window_size, num_features = self._infer_split_shape(rul_dm, split)
             if window_size != self.window_size:
                 raise RuntimeError(
-                    f"{self.dataset_name} FD{fd_idx} {split} split window size mismatch: "
+                    f"{self.dataset_name} condition '{spec.label or spec.fd}' {split} split window size mismatch: "
                     f"expected {self.window_size}, got {window_size}."
                 )
 
@@ -191,8 +345,8 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
                 expected_shape = split_shape
             elif expected_shape != split_shape:
                 raise RuntimeError(
-                    f"Incompatible feature shape across operating conditions for {self.dataset_name} {split}: "
-                    f"expected {expected_shape}, got {split_shape} for FD{fd_idx}."
+                    f"Incompatible feature shape across conditions for {self.dataset_name} {split}: "
+                    f"expected {expected_shape}, got {split_shape} for condition '{spec.label or spec.fd}'."
                 )
 
             wrapped_datasets.append(
@@ -200,10 +354,12 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
                     rul_dm.to_dataset(split),
                     window_size=window_size,
                     num_features=num_features,
-                    target_scale=self.max_rul_val,
+                    target_scale=self.target_scale,
                 )
             )
 
+        if not wrapped_datasets:
+            raise RuntimeError(f"No non-empty datasets available for {self.dataset_name} split '{split}'.")
         if len(wrapped_datasets) == 1:
             return wrapped_datasets[0]
         return ConcatDataset(wrapped_datasets)
@@ -245,11 +401,10 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         flattened = []
         for rul_dm in self.rul_dms:
             _, targets_per_run = rul_dm.data[split]
-            flattened.extend(
-                np.asarray(run_targets, dtype=np.float32).reshape(-1)
-                for run_targets in targets_per_run
-                if np.asarray(run_targets).size > 0
-            )
+            for run_targets in targets_per_run:
+                run_targets = np.asarray(run_targets, dtype=np.float32).reshape(-1)
+                if run_targets.size > 0:
+                    flattened.append(run_targets)
 
         if not flattened:
             raise RuntimeError(f"Split '{split}' does not contain any targets.")
@@ -268,11 +423,11 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
             raise ValueError("rul_threshold_ratio must be in the interval (0, 1].")
 
         train_targets = self._flatten_split_targets("dev")
-        threshold = float(rul_threshold_ratio) * float(self.max_rul_val)
+        threshold = float(rul_threshold_ratio) * float(self.target_scale)
         degraded_indices = np.flatnonzero(train_targets <= threshold).tolist()
 
         print(
             f"[{self.dataset_name}] Extracted {len(degraded_indices)} minority samples "
-            f"(RUL <= {threshold:.4f}) across FD(s) {self.fd}"
+            f"(RUL <= {threshold:.4f}) across conditions {self.conditions}"
         )
         return Subset(self.train_ds, degraded_indices)

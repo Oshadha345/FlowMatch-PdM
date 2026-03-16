@@ -10,8 +10,8 @@ trainer:
   accelerator: "gpu"
   devices: "auto"
   precision:
-    classifier: "16-mixed"
-    regressor: 32
+    rul: 32
+    fault: "16-mixed"
     generator: "16-mixed"
   patience: 10
 
@@ -22,33 +22,41 @@ datasets:
   CMAPSS:
     track: "engine_rul"
     window_size: 30
+    batch_size: 128
     max_rul: 125
-    fd_list: [1, 2, 3, 4]
+    conditions: [1, 2, 3, 4]
     split_strategy: "predefined"
-    clipping: "mandatory"
+    clipping: "piecewise_linear"
 
   N-CMAPSS:
     track: "engine_rul"
     window_size: 50
-    fd_list: [1]
+    batch_size: 128
+    max_rul: null
+    conditions: [1, 2, 3, 4, 5, 6, 7, 8]
     split_strategy: "predefined"
 
   FEMTO:
     track: "bearing_rul"
     window_size: 2560
-    fd_list: [1, 2, 3]
+    batch_size: 64
+    max_rul: null
+    conditions: ["Bearing1_1", "Bearing1_2", "Bearing2_1", "Bearing2_2", "Bearing3_1", "Bearing3_2"]
     split_strategy: "predefined"
 
   XJTU-SY:
     track: "bearing_rul"
     window_size: 2048
-    fd_list: [1, 2, 3]
+    batch_size: 64
+    max_rul: null
+    conditions: [1, 2, 3]
     split_strategy: "predefined"
 
   CWRU:
     track: "bearing_fault"
     window_size: 2048
     stride: 512
+    batch_size: 256
     num_classes: 10
     split_strategy: "stratified_80_10_10"
 
@@ -56,12 +64,14 @@ datasets:
     track: "bearing_fault"
     window_size: 4096
     stride: 2048
+    batch_size: 256
     num_classes: 31
     split_strategy: "stratified_80_10_10"
 
   DEMADICS:
     track: "bearing_fault"
     window_size: 2048
+    batch_size: 256
     num_classes: 5
     split_strategy: "stratified_80_10_10"
 
@@ -75,7 +85,6 @@ classifier:
     num_layers: 2
     dropout: 0.5
     lr: 0.001
-    batch_size: 64
     epochs: 500
   
   # Ref: Vashishtha et al. arXiv:2502.08689
@@ -84,7 +93,6 @@ classifier:
     kernel_sizes: [3, 3, 3, 3, 3]
     dropout: 0.3
     lr: 0.001
-    batch_size: 64
     epochs: 500
 
 # ==========================================

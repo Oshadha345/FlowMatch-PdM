@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
 from sklearn.metrics import (
@@ -193,8 +194,6 @@ class LSTMRegressor(pl.LightningModule):
             nn.Linear(32, 1)
         )
 
-        self.criterion = nn.SmoothL1Loss()
-
         # Metrics
         self.train_rmse = MeanSquaredError(squared=False)
         self.val_rmse = MeanSquaredError(squared=False)
@@ -217,7 +216,7 @@ class LSTMRegressor(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = self.criterion(y_hat, y.float())
+        loss = F.huber_loss(y_hat, y.float())
 
         self.train_rmse(self._restore_scale(y_hat), self._restore_scale(y.float()))
         self.log('train_loss', loss, on_step=False, on_epoch=True, sync_dist=True)
@@ -227,7 +226,7 @@ class LSTMRegressor(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = self.criterion(y_hat, y.float())
+        loss = F.huber_loss(y_hat, y.float())
 
         scaled_preds = self._restore_scale(y_hat)
         scaled_targets = self._restore_scale(y.float())

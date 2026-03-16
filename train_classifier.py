@@ -62,7 +62,7 @@ def _build_model(track: str, model_name: str, config: dict, input_dim: int, num_
 def _resolve_trainer_precision(config: dict, is_rul: bool):
     precision_cfg = config["trainer"].get("precision", "16-mixed")
     if isinstance(precision_cfg, dict):
-        return precision_cfg["regressor" if is_rul else "classifier"]
+        return precision_cfg["rul" if is_rul else "fault"]
     return 32 if is_rul else precision_cfg
 
 
@@ -192,12 +192,12 @@ def main():
     dataset_cfg = get_dataset_config(config, args.dataset)
     model_name = _resolve_classifier_name(args.track, args.model)
     is_rul = "rul" in args.track
-    batch_size = config["classifier"]["lstm"]["batch_size"] if is_rul else config["classifier"]["cnn1d"]["batch_size"]
+    batch_size = int(dataset_cfg["batch_size"])
 
     dm = get_data_module(
         track=args.track,
         dataset_name=args.dataset,
-        fd=dataset_cfg.get("fd_list", 1),
+        conditions=dataset_cfg.get("conditions", dataset_cfg.get("fd_list", 1)),
         window_size=dataset_cfg["window_size"],
         batch_size=batch_size,
     )
@@ -215,7 +215,7 @@ def main():
     sample_x, _ = dm.train_ds[0]
     input_dim = int(sample_x.shape[-1])
     num_classes = int(getattr(dm, "num_classes", dataset_cfg.get("num_classes", 1)))
-    target_scale = float(getattr(dm, "max_rul_val", 1.0))
+    target_scale = float(getattr(dm, "target_scale", 1.0))
     model = _build_model(args.track, model_name, config, input_dim, num_classes, target_scale=target_scale)
 
     session_model_name = resolve_classifier_experiment_name(

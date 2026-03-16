@@ -36,7 +36,7 @@ ABLATION_CHOICES = ["none", "no_prior", "no_tccm", "no_lap"]
 def _resolve_generator_precision(config: dict):
     precision_cfg = config["trainer"].get("precision", "16-mixed")
     if isinstance(precision_cfg, dict):
-        return precision_cfg.get("generator", precision_cfg.get("classifier", "16-mixed"))
+        return precision_cfg.get("generator", precision_cfg.get("fault", "16-mixed"))
     return precision_cfg
 
 
@@ -202,7 +202,7 @@ def main():
     dm = get_data_module(
         track=args.track,
         dataset_name=args.dataset,
-        fd=dataset_cfg.get("fd_list", 1),
+        conditions=dataset_cfg.get("conditions", dataset_cfg.get("fd_list", 1)),
         window_size=dataset_cfg["window_size"],
         batch_size=model_cfg["batch_size"],
     )

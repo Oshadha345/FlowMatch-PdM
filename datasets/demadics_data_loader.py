@@ -39,7 +39,7 @@ class DEMADICSDataModule(pl.LightningDataModule):
         self,
         data_dir: str = "datasets/processed/demadics",
         window_size: int = 2048,
-        batch_size: int = 512,
+        batch_size: int = 256,
         **kwargs,
     ):
         super().__init__()

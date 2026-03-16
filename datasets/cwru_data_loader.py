@@ -33,7 +33,7 @@ class CWRUDataModule(pl.LightningDataModule):
     Uses np.load(mmap_mode='r') for near-instant loading.
     """
     def __init__(self, data_dir: str = "datasets/processed/cwru",
-                 window_size: int = 2048, batch_size: int = 512, **kwargs):
+                 window_size: int = 2048, batch_size: int = 256, **kwargs):
         super().__init__()
         self.save_hyperparameters()
         self.data_dir = data_dir
