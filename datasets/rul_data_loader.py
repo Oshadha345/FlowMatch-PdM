@@ -58,7 +58,14 @@ class _ReaderSpec:
 class _WindowFirstRulDataset(Dataset):
     """Wrap `rul_datasets.RulDataset` and expose windows as [window, features]."""
 
-    def __init__(self, base_dataset: Dataset, window_size: int, num_features: int, target_scale: float = 1.0):
+    def __init__(
+        self,
+        base_dataset: Dataset,
+        window_size: int,
+        num_features: int,
+        target_scale: float = 1.0,
+        static_context: Optional[Sequence[float]] = None,
+    ):
         if target_scale <= 0:
             raise ValueError(f"target_scale must be positive, received {target_scale}.")
 
@@ -66,6 +73,7 @@ class _WindowFirstRulDataset(Dataset):
         self.window_size = window_size
         self.num_features = num_features
         self.target_scale = float(target_scale)
+        self.static_context = None if static_context is None else torch.tensor(static_context, dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.base_dataset)
@@ -96,6 +104,10 @@ class _WindowFirstRulDataset(Dataset):
                 f"Expected {(self.window_size, self.num_features)}, got {tuple(features.shape)}."
             )
 
+        if self.static_context is not None:
+            context = self.static_context.unsqueeze(0).expand(self.window_size, -1)
+            features = torch.cat([features, context], dim=-1)
+
         scaled_target = torch.as_tensor(target, dtype=torch.float32) / self.target_scale
         return features.contiguous(), scaled_target
 
@@ -116,6 +128,7 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         fd: Optional[Union[int, Sequence[Union[int, str]]]] = None,
         window_size: Optional[int] = None,
         batch_size: int = 128,
+        append_condition_features: bool = False,
     ):
         super().__init__()
         self.dataset_name = dataset_name.upper()
@@ -126,6 +139,7 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         self.fd = self.conditions
         self.batch_size = int(batch_size)
         self.window_size = int(window_size or defaults["window_size"])
+        self.append_condition_features = bool(append_condition_features)
         self.max_rul = defaults["max_rul"]
         self.target_scale = 1.0
         self.max_rul_val = self.target_scale
@@ -133,6 +147,7 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         self.save_hyperparameters()
 
         self.reader_specs = self._build_reader_specs()
+        self.condition_feature_map = self._build_condition_feature_map()
         self.readers = self._build_readers()
         self.rul_dms = [rul_datasets.RulDataModule(reader, batch_size=self.batch_size) for reader in self.readers]
 
@@ -284,6 +299,13 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
                 raise ValueError(f"Unsupported RUL dataset: {self.dataset_name}")
         return readers
 
+    def _build_condition_feature_map(self) -> Dict[str, Optional[np.ndarray]]:
+        if not self.append_condition_features:
+            return {str(index): None for index in range(len(self.reader_specs))}
+
+        one_hot = np.eye(len(self.reader_specs), dtype=np.float32)
+        return {str(index): one_hot[index] for index in range(len(self.reader_specs))}
+
     def prepare_data(self):
         for reader in self.readers:
             reader.prepare_data()
@@ -330,7 +352,7 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         wrapped_datasets: List[Dataset] = []
         expected_shape: Optional[Tuple[int, int]] = None
 
-        for spec, rul_dm in zip(self.reader_specs, self.rul_dms):
+        for index, (spec, rul_dm) in enumerate(zip(self.reader_specs, self.rul_dms)):
             if self._split_is_empty(rul_dm, split):
                 continue
 
@@ -356,6 +378,7 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
                     window_size=window_size,
                     num_features=num_features,
                     target_scale=self.target_scale,
+                    static_context=self.condition_feature_map[str(index)],
                 )
             )
 

@@ -43,6 +43,7 @@ datasets:
     max_rul: null
     # Use FD ids to preserve the reader's canonical dev/val/test split.
     conditions: [1, 2, 3]
+    append_condition_features: true
     split_strategy: "predefined"
 
   XJTU-SY:

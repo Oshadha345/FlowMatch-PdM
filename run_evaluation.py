@@ -164,6 +164,7 @@ def evaluate_generator_run(
         conditions=dataset_cfg.get("conditions", dataset_cfg.get("fd_list", 1)),
         window_size=dataset_cfg["window_size"],
         batch_size=config.get("evaluation", {}).get("batch_size", 128),
+        append_condition_features=dataset_cfg.get("append_condition_features", False),
     )
     dm.prepare_data()
     dm.setup(stage="fit")
@@ -274,6 +275,7 @@ def evaluate_classifier_run(
         conditions=dataset_cfg.get("conditions", dataset_cfg.get("fd_list", 1)),
         window_size=dataset_cfg["window_size"],
         batch_size=batch_size,
+        append_condition_features=dataset_cfg.get("append_condition_features", False),
     )
     dm.prepare_data()
     dm.setup(stage=None)

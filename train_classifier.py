@@ -200,6 +200,7 @@ def main():
         conditions=dataset_cfg.get("conditions", dataset_cfg.get("fd_list", 1)),
         window_size=dataset_cfg["window_size"],
         batch_size=batch_size,
+        append_condition_features=dataset_cfg.get("append_condition_features", False),
     )
     train_ds, augmentation_summary = _build_training_dataset(dm, args, config)
     train_loader = DataLoader(
