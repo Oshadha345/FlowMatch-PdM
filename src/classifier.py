@@ -15,7 +15,7 @@ from sklearn.metrics import (
     mean_absolute_error,
     r2_score,
 )
-from torchmetrics import Accuracy, MeanSquaredError
+from torchmetrics import Accuracy, MeanAbsoluteError, MeanSquaredError, R2Score
 
 class CNN1DClassifier(pl.LightningModule):
     """
@@ -162,11 +162,22 @@ class LSTMRegressor(pl.LightningModule):
     LSTM Baseline for Remaining Useful Life (RUL) Regression (CMAPSS / FEMTO).
     Optimized for capturing long-term temporal degradation dependencies.
     """
-    def __init__(self, input_dim: int, hidden_dim: int = 100, num_layers: int = 2, learning_rate: float = 1e-3):
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 100,
+        num_layers: int = 2,
+        learning_rate: float = 1e-3,
+        target_scale: float = 1.0,
+    ):
         super().__init__()
         self.save_hyperparameters()
         self.learning_rate = learning_rate
-        
+        self.target_scale = float(target_scale)
+        if self.target_scale <= 0:
+            raise ValueError(f"target_scale must be positive, received {target_scale}.")
+
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
@@ -174,21 +185,26 @@ class LSTMRegressor(pl.LightningModule):
             batch_first=True,
             dropout=0.2 if num_layers > 1 else 0.0
         )
-        
+
         self.regressor = nn.Sequential(
             nn.Linear(hidden_dim, 32),
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(32, 1)
         )
-        
-        self.criterion = nn.MSELoss()
-        
+
+        self.criterion = nn.SmoothL1Loss()
+
         # Metrics
         self.train_rmse = MeanSquaredError(squared=False)
         self.val_rmse = MeanSquaredError(squared=False)
+        self.val_mae = MeanAbsoluteError()
+        self.val_r2 = R2Score()
         self._test_preds = []
         self._test_targets = []
+
+    def _restore_scale(self, tensor: torch.Tensor) -> torch.Tensor:
+        return tensor * self.target_scale
 
     def extract_features(self, x):
         lstm_out, _ = self.lstm(x)
@@ -202,27 +218,34 @@ class LSTMRegressor(pl.LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = self.criterion(y_hat, y.float())
-        
-        self.train_rmse(y_hat, y.float())
-        self.log('train_loss', loss, on_epoch=True)
-        self.log('train_rmse', self.train_rmse, on_epoch=True, prog_bar=True)
+
+        self.train_rmse(self._restore_scale(y_hat), self._restore_scale(y.float()))
+        self.log('train_loss', loss, on_step=False, on_epoch=True, sync_dist=True)
+        self.log('train_rmse', self.train_rmse, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
         loss = self.criterion(y_hat, y.float())
-        
-        self.val_rmse(y_hat, y.float())
+
+        scaled_preds = self._restore_scale(y_hat)
+        scaled_targets = self._restore_scale(y.float())
+        self.val_rmse(scaled_preds, scaled_targets)
+        self.val_mae(scaled_preds, scaled_targets)
+        self.val_r2(scaled_preds, scaled_targets)
+
         self.log('val_loss', loss, prog_bar=True, sync_dist=True)
-        self.log('val_rmse', self.val_rmse, prog_bar=True)
+        self.log('val_rmse', self.val_rmse, prog_bar=True, sync_dist=True)
+        self.log('val_mae', self.val_mae, sync_dist=True)
+        self.log('val_r2', self.val_r2, sync_dist=True)
 
     def test_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
 
-        self._test_preds.append(y_hat.detach().cpu())
-        self._test_targets.append(y.detach().cpu().float())
+        self._test_preds.append(self._restore_scale(y_hat.detach().cpu()))
+        self._test_targets.append(self._restore_scale(y.detach().cpu().float()))
 
     def on_test_epoch_start(self):
         self._test_preds = []

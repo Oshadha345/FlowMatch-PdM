@@ -9,7 +9,10 @@ logging:
 trainer:
   accelerator: "gpu"
   devices: "auto"
-  precision: "16-mixed"
+  precision:
+    classifier: "16-mixed"
+    regressor: 32
+    generator: "16-mixed"
   patience: 10
 
 # Dataset Specific Parameters
@@ -20,22 +23,26 @@ datasets:
     track: "engine_rul"
     window_size: 30
     max_rul: 125
+    fd_list: [1, 2, 3, 4]
     split_strategy: "predefined"
     clipping: "mandatory"
 
   N-CMAPSS:
     track: "engine_rul"
     window_size: 50
+    fd_list: [1]
     split_strategy: "predefined"
 
   FEMTO:
     track: "bearing_rul"
     window_size: 2560
+    fd_list: [1, 2, 3]
     split_strategy: "predefined"
 
   XJTU-SY:
     track: "bearing_rul"
     window_size: 2048
+    fd_list: [1, 2, 3]
     split_strategy: "predefined"
 
   CWRU:
@@ -68,8 +75,8 @@ classifier:
     num_layers: 2
     dropout: 0.5
     lr: 0.001
-    batch_size: 512
-    epochs: 200
+    batch_size: 64
+    epochs: 500
   
   # Ref: Vashishtha et al. arXiv:2502.08689
   cnn1d:
@@ -78,7 +85,7 @@ classifier:
     dropout: 0.3
     lr: 0.001
     batch_size: 64
-    epochs: 100
+    epochs: 500
 
 # ==========================================
 # Generative Baselines

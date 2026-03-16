@@ -33,6 +33,13 @@ GENERATOR_CONFIG_MAP = {
 ABLATION_CHOICES = ["none", "no_prior", "no_tccm", "no_lap"]
 
 
+def _resolve_generator_precision(config: dict):
+    precision_cfg = config["trainer"].get("precision", "16-mixed")
+    if isinstance(precision_cfg, dict):
+        return precision_cfg.get("generator", precision_cfg.get("classifier", "16-mixed"))
+    return precision_cfg
+
+
 def _get_minority_dataset(dm, rul_threshold_ratio: float):
     try:
         return dm.get_minority_dataset(rul_threshold_ratio=rul_threshold_ratio)
@@ -195,6 +202,7 @@ def main():
     dm = get_data_module(
         track=args.track,
         dataset_name=args.dataset,
+        fd=dataset_cfg.get("fd_list", 1),
         window_size=dataset_cfg["window_size"],
         batch_size=model_cfg["batch_size"],
     )
@@ -234,7 +242,7 @@ def main():
         max_epochs=model_cfg["epochs"],
         accelerator=config["trainer"]["accelerator"],
         devices=config["trainer"]["devices"],
-        precision=config["trainer"]["precision"],
+        precision=_resolve_generator_precision(config),
         logger=loggers,
         callbacks=callbacks,
         log_every_n_steps=10,

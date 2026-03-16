@@ -12,12 +12,12 @@ Every checkbox below is meant to map to a real run folder under `results/<track>
 
 ## Preflight
 
-- [ ] `cd /home/buddhiw/flowmatch/FlowMatch-PdM`
-- [ ] `conda activate flowmatch_pdm`
-- [ ] `chmod +x run_all.sh`
-- [ ] `python -m jupyter nbconvert --to notebook --execute notebooks/01_dataset_analysis.ipynb --output 01_dataset_analysis.executed.ipynb --output-dir notebooks --ExecutePreprocessor.timeout=0 --ExecutePreprocessor.kernel_name=python3`
-- [ ] Confirm the executed notebook ends with `Supported loader readiness: GO`
-- [ ] Confirm the executed notebook ends with `Full requested roster readiness: GO`
+- [x] `cd /home/buddhiw/flowmatch/FlowMatch-PdM`
+- [x] `conda activate flowmatch_pdm`
+- [x] `chmod +x run_all.sh`
+- [x] `python -m jupyter nbconvert --to notebook --execute notebooks/01_dataset_analysis.ipynb --output 01_dataset_analysis.executed.ipynb --output-dir notebooks --ExecutePreprocessor.timeout=0 --ExecutePreprocessor.kernel_name=python3`
+- [x] Confirm the executed notebook ends with `Supported loader readiness: GO`
+- [x] Confirm the executed notebook ends with `Full requested roster readiness: GO`
 
 ---
 
@@ -27,7 +27,7 @@ Every checkbox below is meant to map to a real run folder under `results/<track>
 
 ### Engine RUL
 
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline`
+- [] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline`
 - [ ] `python train_classifier.py --track engine_rul --dataset N-CMAPSS --model baseline`
 
 ### Bearing RUL
@@ -37,8 +37,8 @@ Every checkbox below is meant to map to a real run folder under `results/<track>
 
 ### Fault Classification
 
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline`
+- [x] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline`
+- [x] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline`
 - [ ] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline`
 
 ### Phase 0 Checks

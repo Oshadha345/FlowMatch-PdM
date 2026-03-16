@@ -20,12 +20,12 @@ Log only successful runs here. This file is the single source of truth for basel
 
 | Dataset | Track | Primary Metric | Score | Run ID / Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **CMAPSS** | Engine RUL | RMSE (↓) | - | - |
+| **CMAPSS** | Engine RUL | RMSE (↓) |  |  |
 | **N-CMAPSS** | Engine RUL | RMSE (↓) | - | - |
 | **FEMTO** | Bearing RUL | RMSE (↓) | - | - |
 | **XJTU-SY** | Bearing RUL | RMSE (↓) | - | - |
-| **CWRU** | Fault Classification | F1 Macro (↑) | - | - |
-| **DEMADICS** | Fault Classification | F1 Macro (↑) | - | - |
+| **CWRU** | Fault Classification | F1 Macro (↑) | 1 | run_20260316_111110 |
+| **DEMADICS** | Fault Classification | F1 Macro (↑) | 0.9667774086378739 | run_20260316_112649 |
 | **Paderborn** | Fault Classification | F1 Macro (↑) | - | - |
 
 ---

@@ -41,13 +41,14 @@ def _resolve_classifier_name(track: str, requested_model: str) -> str:
     return model_name
 
 
-def _build_model(track: str, model_name: str, config: dict, input_dim: int, num_classes: int):
+def _build_model(track: str, model_name: str, config: dict, input_dim: int, num_classes: int, target_scale: float = 1.0):
     if model_name == "LSTMRegressor":
         return LSTMRegressor(
             input_dim=input_dim,
             hidden_dim=config["classifier"]["lstm"]["hidden_dim"],
             num_layers=config["classifier"]["lstm"]["num_layers"],
             learning_rate=config["classifier"]["lstm"]["lr"],
+            target_scale=target_scale,
         )
     if model_name == "CNN1DClassifier":
         return CNN1DClassifier(
@@ -56,6 +57,13 @@ def _build_model(track: str, model_name: str, config: dict, input_dim: int, num_
             learning_rate=config["classifier"]["cnn1d"]["lr"],
         )
     raise ValueError(f"Unsupported classifier model: {model_name}")
+
+
+def _resolve_trainer_precision(config: dict, is_rul: bool):
+    precision_cfg = config["trainer"].get("precision", "16-mixed")
+    if isinstance(precision_cfg, dict):
+        return precision_cfg["regressor" if is_rul else "classifier"]
+    return 32 if is_rul else precision_cfg
 
 
 def _collect_dataset_tensors(dataset):
@@ -189,6 +197,7 @@ def main():
     dm = get_data_module(
         track=args.track,
         dataset_name=args.dataset,
+        fd=dataset_cfg.get("fd_list", 1),
         window_size=dataset_cfg["window_size"],
         batch_size=batch_size,
     )
@@ -206,7 +215,8 @@ def main():
     sample_x, _ = dm.train_ds[0]
     input_dim = int(sample_x.shape[-1])
     num_classes = int(getattr(dm, "num_classes", dataset_cfg.get("num_classes", 1)))
-    model = _build_model(args.track, model_name, config, input_dim, num_classes)
+    target_scale = float(getattr(dm, "max_rul_val", 1.0))
+    model = _build_model(args.track, model_name, config, input_dim, num_classes, target_scale=target_scale)
 
     session_model_name = resolve_classifier_experiment_name(
         model_name,
@@ -243,7 +253,7 @@ def main():
         max_epochs=epochs,
         accelerator=config["trainer"]["accelerator"],
         devices=config["trainer"]["devices"],
-        precision=config["trainer"]["precision"],
+        precision=_resolve_trainer_precision(config, is_rul),
         logger=loggers,
         callbacks=[early_stop, checkpoint_callback, metrics_tracker],
         log_every_n_steps=10,
@@ -252,6 +262,7 @@ def main():
     print(f"[Classifier] Training {model_name} on {args.dataset} with augmentation mode '{augmentation_summary['mode']}'")
     print(f"[Classifier] Outputs: {paths['root']}")
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=dm.val_dataloader())
+    dm.setup(stage="test")
     trainer.test(model=model, dataloaders=dm.test_dataloader(), ckpt_path="best")
 
     best_model_path = checkpoint_callback.best_model_path
