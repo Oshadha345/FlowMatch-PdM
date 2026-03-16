@@ -150,7 +150,7 @@ class CNN1DClassifier(pl.LightningModule):
         }
 
         for name, value in metrics.items():
-            self.log(name, value, prog_bar=name in {"test_acc", "test_f1_macro"})
+            self.log(name, value, prog_bar=name in {"test_acc", "test_f1_macro"}, sync_dist=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)
@@ -281,7 +281,7 @@ class LSTMRegressor(pl.LightningModule):
         }
 
         for name, value in metrics.items():
-            self.log(name, value, prog_bar=name in {"test_rmse", "test_mae"})
+            self.log(name, value, prog_bar=name in {"test_rmse", "test_mae"}, sync_dist=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)

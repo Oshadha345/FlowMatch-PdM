@@ -41,7 +41,8 @@ datasets:
     window_size: 2560
     batch_size: 64
     max_rul: null
-    conditions: ["Bearing1_1", "Bearing1_2", "Bearing2_1", "Bearing2_2", "Bearing3_1", "Bearing3_2"]
+    # Use FD ids to preserve the reader's canonical dev/val/test split.
+    conditions: [1, 2, 3]
     split_strategy: "predefined"
 
   XJTU-SY:

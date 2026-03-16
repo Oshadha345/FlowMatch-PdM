@@ -1,5 +1,6 @@
 # datasets/rul_data_loader.py
 import re
+import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -24,14 +25,7 @@ _RUL_DATASET_DEFAULTS: Dict[str, Dict[str, object]] = {
     "FEMTO": {
         "window_size": 2560,
         "max_rul": None,
-        "conditions": [
-            "Bearing1_1",
-            "Bearing1_2",
-            "Bearing2_1",
-            "Bearing2_2",
-            "Bearing3_1",
-            "Bearing3_2",
-        ],
+        "conditions": [1, 2, 3],
     },
     "XJTU-SY": {
         "window_size": 2048,
@@ -236,6 +230,13 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
                 "val": [run_idx for run_idx in default_splits["val"] if run_idx not in selected_runs],
                 "test": list(default_splits["test"]),
             }
+            if not run_split_dist["val"]:
+                warnings.warn(
+                    "Custom FEMTO run selection consumed the canonical validation run for "
+                    f"FD{fd}. Validation for this condition will be empty. "
+                    f"Requested runs: {selected_runs}; default split: {default_splits}.",
+                    stacklevel=2,
+                )
             specs.append(
                 _ReaderSpec(
                     fd=fd,

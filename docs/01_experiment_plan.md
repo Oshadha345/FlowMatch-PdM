@@ -39,7 +39,7 @@ Every checkbox below is meant to map to a real run folder under `results/<track>
 
 - [x] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline`
 - [x] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline`
-- [ ] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline`
+- [x] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline`
 
 ### Phase 0 Checks
 
