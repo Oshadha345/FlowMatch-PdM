@@ -105,7 +105,7 @@ generative:
   timevae:
     latent_dim: 16
     hidden_dim: 64
-    lr: 1e-3
+    lr: 0.001
     epochs: 500
     batch_size: 128
   
@@ -113,14 +113,14 @@ generative:
   timegan:
     hidden_dim: 24
     noise_dim: 32
-    lr: 1e-4
+    lr: 0.0001
     epochs: 500
     batch_size: 128
   
   # Ref: Diff-MTS + survey arXiv:2407.11501
   diffusion:
     timesteps: 200
-    lr: 2e-4
+    lr: 0.0002
     epochs: 200
     batch_size: 128
     base_channels: 64
@@ -130,7 +130,7 @@ generative:
   timeflow:
     hidden_dim: 64
     euler_steps: 100
-    lr: 1e-3
+    lr: 0.001
     epochs: 200
     batch_size: 128
   
@@ -139,7 +139,7 @@ generative:
     mamba_d_model: 128
     mamba_d_state: 16
     euler_steps: 100
-    lr: 1e-3
+    lr: 0.001
     epochs: 200
     batch_size: 128
     lap_threshold: 0.05
@@ -148,7 +148,7 @@ generative:
   cotgan:
     hidden_dim: 128
     noise_dim: 32
-    lr: 2e-4
+    lr: 0.0002
     epochs: 200
     batch_size: 64
     sinkhorn_eps: 0.1
@@ -159,7 +159,7 @@ generative:
 
   faultdiffusion:
     timesteps: 200
-    lr: 2e-4
+    lr: 0.0002
     epochs: 200
     batch_size: 64
     base_channels: 96
@@ -169,8 +169,12 @@ generative:
 evaluation:
   batch_size: 128
   max_samples: 2048
+  euler_steps: 100
+  mmd_kernel_bandwidth: "median"
+  discriminative_hidden_dim: 64
   discriminative_epochs: 20
   predictive_epochs: 20
+  tstr_epochs: 20
 
 # ==========================================
 # Classical Baselines

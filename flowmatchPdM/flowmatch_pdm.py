@@ -144,7 +144,7 @@ class FlowMatchPdM(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.config.get('lr', 1e-3))
+        return torch.optim.Adam(self.parameters(), lr=float(self.hparams.config.get('lr', 1e-3)))
 
     @torch.no_grad()
     def generate(self, conditions, num_samples: int):
