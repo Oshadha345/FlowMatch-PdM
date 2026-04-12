@@ -1,4 +1,5 @@
 import argparse
+import math
 from pathlib import Path
 
 import numpy as np
@@ -6,11 +7,12 @@ import pytorch_lightning as pl
 import torch
 import yaml
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
-from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
+from torch.utils.data import BatchSampler, ConcatDataset, DataLoader, TensorDataset
 
 from run_evaluation import evaluate_classifier_run
 from src.baselines import ClassicalAugmenter
 from src.classifier import CNN1DClassifier, LSTMRegressor
+from src.evaluation import TSTR_Evaluation
 from src.utils.data_helper import get_data_module, get_dataset_config
 from src.utils.logger_utils import (
     JSONMetricsTracker,
@@ -28,6 +30,75 @@ except Exception:  # pragma: no cover - wandb is optional at runtime
 
 CLASSIFIER_CHOICES = ["baseline", "LSTMRegressor", "CNN1DClassifier"]
 AUGMENTATION_CHOICES = ["none", "noise", "smote"]
+DEFAULT_TSTR_MIN_RELATIVE_F1 = 0.8
+DEFAULT_TSTR_MIN_RELATIVE_BALANCED_ACC = 0.8
+
+
+class _RealSyntheticBatchSampler(BatchSampler):
+    """
+    Batch sampler that anchors each epoch on real samples and injects a controlled
+    number of synthetic samples into every batch.
+    """
+
+    def __init__(self, real_size: int, synthetic_size: int, batch_size: int, aug_ratio: float):
+        if real_size <= 0:
+            raise ValueError("real_size must be positive.")
+        if synthetic_size < 0:
+            raise ValueError("synthetic_size must be non-negative.")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+        if not 0.0 <= aug_ratio < 1.0:
+            raise ValueError(f"aug_ratio must lie in [0, 1), received {aug_ratio}.")
+
+        self.real_size = int(real_size)
+        self.synthetic_size = int(synthetic_size)
+        self.batch_size = int(batch_size)
+        self.aug_ratio = float(aug_ratio)
+
+        synthetic_per_batch = int(round(self.batch_size * self.aug_ratio))
+        if self.synthetic_size > 0 and self.aug_ratio > 0.0 and synthetic_per_batch == 0:
+            synthetic_per_batch = 1
+        if synthetic_per_batch >= self.batch_size:
+            synthetic_per_batch = self.batch_size - 1
+
+        self.synthetic_per_batch = max(synthetic_per_batch, 0)
+        self.real_per_batch = self.batch_size - self.synthetic_per_batch
+        if self.real_per_batch <= 0:
+            raise ValueError("Resolved real_per_batch to zero; reduce aug_ratio or increase batch_size.")
+
+        self.num_batches = max(int(math.ceil(self.real_size / self.real_per_batch)), 1)
+
+    def __len__(self) -> int:
+        return self.num_batches
+
+    def __iter__(self):
+        real_indices = torch.randperm(self.real_size, dtype=torch.long)
+        required_real = self.num_batches * self.real_per_batch
+        if required_real > self.real_size:
+            pad_size = required_real - self.real_size
+            pad = torch.randint(self.real_size, (pad_size,), dtype=torch.long)
+            real_indices = torch.cat([real_indices, pad], dim=0)
+
+        synthetic_indices = None
+        if self.synthetic_per_batch > 0:
+            required_synthetic = self.num_batches * self.synthetic_per_batch
+            synthetic_indices = torch.randint(self.synthetic_size, (required_synthetic,), dtype=torch.long)
+
+        for batch_idx in range(self.num_batches):
+            start_real = batch_idx * self.real_per_batch
+            end_real = start_real + self.real_per_batch
+            real_batch = real_indices[start_real:end_real]
+
+            if synthetic_indices is None:
+                batch = real_batch
+            else:
+                start_syn = batch_idx * self.synthetic_per_batch
+                end_syn = start_syn + self.synthetic_per_batch
+                synthetic_batch = synthetic_indices[start_syn:end_syn] + self.real_size
+                batch = torch.cat([real_batch, synthetic_batch], dim=0)
+                batch = batch[torch.randperm(batch.numel(), dtype=torch.long)]
+
+            yield batch.tolist()
 
 
 def _resolve_classifier_name(track: str, requested_model: str) -> str:
@@ -75,7 +146,63 @@ def _collect_dataset_tensors(dataset):
     return torch.stack(xs), torch.stack(ys)
 
 
-def _load_generator_augmented_dataset(dm, track: str, dataset: str, gen_model: str, source_run_id: str, gen_ablation: str):
+def _resolve_aug_ratio(requested_aug_ratio, real_count: int, synthetic_count: int) -> float:
+    if synthetic_count <= 0:
+        return 0.0
+    if requested_aug_ratio is None:
+        return float(synthetic_count) / float(real_count + synthetic_count)
+
+    aug_ratio = float(requested_aug_ratio)
+    if not 0.0 <= aug_ratio < 1.0:
+        raise ValueError(f"--aug_ratio must lie in [0, 1), received {requested_aug_ratio}.")
+    return aug_ratio
+
+
+def _run_tstr_gate(
+    generator_session: SessionManager,
+    synthetic_x: np.ndarray,
+    synthetic_y: np.ndarray,
+    config: dict,
+) -> dict:
+    real_x_path = Path(generator_session.paths["generator_datas"]) / "real_minority_data.npy"
+    real_y_path = Path(generator_session.paths["generator_datas"]) / "real_minority_targets.npy"
+    if not real_x_path.exists() or not real_y_path.exists():
+        raise FileNotFoundError(
+            "TSTR gate requires the generator evaluation artifacts "
+            f"'{real_x_path.name}' and '{real_y_path.name}'. Re-run generator evaluation first."
+        )
+
+    real_x = np.load(real_x_path).astype(np.float32)
+    real_y = np.load(real_y_path)
+    tstr = TSTR_Evaluation(
+        save_dir=str(generator_session.paths["evaluation_results"]),
+        batch_size=config.get("evaluation", {}).get("batch_size", 128),
+        epochs=config.get("evaluation", {}).get("tstr_epochs", 20),
+        min_relative_f1=config.get("evaluation", {}).get("tstr_min_relative_f1", DEFAULT_TSTR_MIN_RELATIVE_F1),
+        min_relative_balanced_accuracy=config.get("evaluation", {}).get(
+            "tstr_min_relative_balanced_accuracy",
+            DEFAULT_TSTR_MIN_RELATIVE_BALANCED_ACC,
+        ),
+    )
+    return tstr.run(
+        synthetic_data=synthetic_x,
+        synthetic_targets=synthetic_y,
+        real_data=real_x,
+        real_targets=real_y,
+        filename_prefix="tstr_gate",
+    )
+
+
+def _load_generator_augmented_dataset(
+    dm,
+    track: str,
+    dataset: str,
+    gen_model: str,
+    source_run_id: str,
+    gen_ablation: str,
+    requested_aug_ratio,
+    config: dict,
+):
     generator_model_name = resolve_experiment_model_name(gen_model, gen_ablation)
     generator_session = SessionManager.from_existing(track, dataset, generator_model_name, run_id=source_run_id)
     gen_dir = Path(generator_session.paths["generator_datas"])
@@ -97,18 +224,41 @@ def _load_generator_augmented_dataset(dm, track: str, dataset: str, gen_model: s
         synthetic_y_tensor = torch.tensor(synthetic_y, dtype=label_dtype).reshape(-1)
 
     synthetic_ds = TensorDataset(synthetic_x_tensor, synthetic_y_tensor)
+    resolved_aug_ratio = _resolve_aug_ratio(requested_aug_ratio, len(dm.train_ds), len(synthetic_ds))
+
+    tstr_metrics = None
+    if track == "bearing_fault":
+        tstr_metrics = _run_tstr_gate(generator_session, synthetic_x, synthetic_y, config)
+        if not bool(tstr_metrics.get("gate_passed", False)):
+            raise RuntimeError(
+                "TSTR gate rejected synthetic augmentation "
+                f"for {dataset}/{gen_model}. Metrics: {tstr_metrics}"
+            )
+
     mixed_ds = ConcatDataset([dm.train_ds, synthetic_ds])
+    batch_sampler = _RealSyntheticBatchSampler(
+        real_size=len(dm.train_ds),
+        synthetic_size=len(synthetic_ds),
+        batch_size=dm.batch_size,
+        aug_ratio=resolved_aug_ratio,
+    )
     summary = {
         "mode": "generator",
         "source_run_id": generator_session.run_id,
         "source_model": gen_model,
         "source_experiment_model": generator_model_name,
         "source_ablation": gen_ablation,
+        "requested_aug_ratio": None if requested_aug_ratio is None else float(requested_aug_ratio),
+        "resolved_aug_ratio": resolved_aug_ratio,
+        "real_per_batch": batch_sampler.real_per_batch,
+        "synthetic_per_batch": batch_sampler.synthetic_per_batch,
         "synthetic_count": int(len(synthetic_ds)),
         "real_count": int(len(dm.train_ds)),
         "total_count": int(len(mixed_ds)),
     }
-    return mixed_ds, summary
+    if tstr_metrics is not None:
+        summary["tstr_gate"] = tstr_metrics
+    return mixed_ds, summary, batch_sampler
 
 
 def _build_training_dataset(dm, args, config):
@@ -120,7 +270,16 @@ def _build_training_dataset(dm, args, config):
             raise ValueError("Generator augmentation requires both --gen_model and --source_run_id.")
         if args.aug != "none":
             raise ValueError("Use either classical augmentation (--aug noise/smote) or generator augmentation, not both.")
-        return _load_generator_augmented_dataset(dm, args.track, args.dataset, args.gen_model, args.source_run_id, args.gen_ablation)
+        return _load_generator_augmented_dataset(
+            dm,
+            args.track,
+            args.dataset,
+            args.gen_model,
+            args.source_run_id,
+            args.gen_ablation,
+            args.aug_ratio,
+            config,
+        )
 
     x_train, y_train = _collect_dataset_tensors(dm.train_ds)
     x_np = x_train.numpy()
@@ -142,7 +301,7 @@ def _build_training_dataset(dm, args, config):
             "mode": "smote",
             "real_count": int(len(dm.train_ds)),
             "augmented_count": int(len(dataset)),
-        }
+        }, None
 
     if args.aug == "noise":
         sigma = config.get("classical", {}).get("jittering", {}).get("sigma", 0.05)
@@ -159,13 +318,31 @@ def _build_training_dataset(dm, args, config):
             "sigma": sigma,
             "real_count": int(len(dm.train_ds)),
             "augmented_count": int(len(dataset)),
-        }
+        }, None
 
     return dm.train_ds, {
         "mode": "none",
         "real_count": int(len(dm.train_ds)),
         "augmented_count": int(len(dm.train_ds)),
-    }
+    }, None
+
+
+def _build_train_loader(train_ds, batch_size: int, batch_sampler):
+    if batch_sampler is not None:
+        return DataLoader(
+            train_ds,
+            batch_sampler=batch_sampler,
+            num_workers=4,
+            pin_memory=True,
+        )
+
+    return DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+    )
 
 
 def main():
@@ -178,6 +355,7 @@ def main():
     parser.add_argument("--gen_model", type=str, default=None, help="Generator model name for synthetic augmentation.")
     parser.add_argument("--source_run_id", type=str, default=None, help="Generator run identifier for synthetic augmentation.")
     parser.add_argument("--gen_ablation", type=str, default="none", choices=["none", "no_prior", "no_tccm", "no_lap"], help="Generator ablation variant for synthetic augmentation.")
+    parser.add_argument("--aug_ratio", type=float, default=None, help="Target synthetic batch fraction for generator augmentation, e.g. 0.2.")
     parser.add_argument("--use_wandb", action="store_true", help="Enable W&B logging for this run.")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml")
     args = parser.parse_args()
@@ -202,14 +380,8 @@ def main():
         batch_size=batch_size,
         append_condition_features=dataset_cfg.get("append_condition_features", False),
     )
-    train_ds, augmentation_summary = _build_training_dataset(dm, args, config)
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
-    )
+    train_ds, augmentation_summary, batch_sampler = _build_training_dataset(dm, args, config)
+    train_loader = _build_train_loader(train_ds, batch_size=batch_size, batch_sampler=batch_sampler)
 
     dm.prepare_data()
     dm.setup(stage="fit")

@@ -55,6 +55,238 @@ class NextStepGRU(nn.Module):
         return self.head(hidden)
 
 
+class _TSTRSequenceClassifier(nn.Module):
+    def __init__(self, input_dim: int, num_classes: int, hidden_dim: int = 64):
+        super().__init__()
+        self.gru = nn.GRU(input_dim, hidden_dim, num_layers=1, batch_first=True)
+        self.head = nn.Linear(hidden_dim, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        hidden, _ = self.gru(x)
+        return self.head(hidden[:, -1])
+
+
+class TSTR_Evaluation:
+    """
+    Train-on-synthetic, test-on-real gate for downstream classification readiness.
+
+    The gate compares a lightweight classifier trained on synthetic labels against a
+    matched classifier trained on a held-out split of real data. Synthetic data only
+    passes when it retains enough of the real decision boundary to approach the
+    real-trained reference performance.
+    """
+
+    def __init__(
+        self,
+        save_dir: str,
+        batch_size: int = 128,
+        epochs: int = 20,
+        learning_rate: float = 1e-3,
+        hidden_dim: int = 64,
+        min_relative_f1: float = 0.8,
+        min_relative_balanced_accuracy: float = 0.8,
+        device: Optional[torch.device] = None,
+        class_names: Optional[List[str]] = None,
+    ):
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.batch_size = int(batch_size)
+        self.epochs = int(epochs)
+        self.learning_rate = float(learning_rate)
+        self.hidden_dim = int(hidden_dim)
+        self.min_relative_f1 = float(min_relative_f1)
+        self.min_relative_balanced_accuracy = float(min_relative_balanced_accuracy)
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.class_names = class_names
+
+    def _write_report(self, filename_prefix: str, metrics: Dict[str, float], extra_payload: Optional[dict] = None):
+        lines = [f"{filename_prefix.replace('_', ' ').title()} Evaluation"]
+        for key, value in metrics.items():
+            if isinstance(value, (int, float, bool, np.floating)):
+                lines.append(f"{key}: {value}")
+            else:
+                lines.append(f"{key}: {value}")
+
+        (self.save_dir / f"{filename_prefix}_metrics.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        payload = {"metrics": metrics}
+        if extra_payload:
+            payload.update(extra_payload)
+        (self.save_dir / f"{filename_prefix}_metrics.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _build_loader(self, x: np.ndarray, y: np.ndarray, shuffle: bool) -> DataLoader:
+        dataset = TensorDataset(
+            torch.from_numpy(np.asarray(x, dtype=np.float32)),
+            torch.from_numpy(np.asarray(y, dtype=np.int64)),
+        )
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle)
+
+    def _fit_classifier(self, model: nn.Module, x_train: np.ndarray, y_train: np.ndarray):
+        optimizer = torch.optim.AdamW(model.parameters(), lr=self.learning_rate, weight_decay=1e-4)
+        criterion = nn.CrossEntropyLoss()
+        loader = self._build_loader(x_train, y_train, shuffle=True)
+
+        model.train()
+        for _ in range(self.epochs):
+            for batch_x, batch_y in loader:
+                batch_x = batch_x.to(self.device)
+                batch_y = batch_y.to(self.device)
+                optimizer.zero_grad()
+                logits = model(batch_x)
+                loss = criterion(logits, batch_y)
+                loss.backward()
+                optimizer.step()
+
+    def _evaluate_classifier(self, model: nn.Module, x_eval: np.ndarray, y_eval: np.ndarray) -> Dict[str, float]:
+        loader = self._build_loader(x_eval, y_eval, shuffle=False)
+        preds = []
+        probs = []
+        targets = []
+
+        model.eval()
+        with torch.no_grad():
+            for batch_x, batch_y in loader:
+                logits = model(batch_x.to(self.device))
+                prob = torch.softmax(logits, dim=1)
+                preds.append(torch.argmax(prob, dim=1).cpu().numpy())
+                probs.append(prob.cpu().numpy())
+                targets.append(batch_y.numpy())
+
+        y_true = np.concatenate(targets, axis=0)
+        y_pred = np.concatenate(preds, axis=0)
+        y_prob = np.concatenate(probs, axis=0)
+
+        return {
+            "accuracy": float(accuracy_score(y_true, y_pred)),
+            "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+            "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+            "mcc": float(matthews_corrcoef(y_true, y_pred)),
+            "cross_entropy": float(log_loss(y_true, y_prob, labels=np.unique(y_true))),
+        }
+
+    def run(
+        self,
+        synthetic_data: np.ndarray,
+        synthetic_targets: np.ndarray,
+        real_data: np.ndarray,
+        real_targets: np.ndarray,
+        filename_prefix: str = "tstr",
+    ) -> Dict[str, float]:
+        synthetic_data = np.asarray(synthetic_data, dtype=np.float32)
+        synthetic_targets = np.asarray(synthetic_targets).reshape(-1)
+        real_data = np.asarray(real_data, dtype=np.float32)
+        real_targets = np.asarray(real_targets).reshape(-1)
+
+        if synthetic_data.ndim != 3 or real_data.ndim != 3:
+            raise ValueError("TSTR_Evaluation expects [batch, window, features] arrays for both synthetic and real data.")
+        if len(synthetic_data) != len(synthetic_targets):
+            raise ValueError("Synthetic features and targets must have the same length.")
+        if len(real_data) != len(real_targets):
+            raise ValueError("Real features and targets must have the same length.")
+
+        synthetic_label_values = np.unique(synthetic_targets)
+        real_label_values = np.unique(real_targets)
+
+        if synthetic_label_values.size < 2:
+            metrics = {
+                "gate_passed": False,
+                "tstr_applicable": False,
+                "failure_reason": "synthetic_targets_have_fewer_than_two_classes",
+                "synthetic_num_classes": int(synthetic_label_values.size),
+                "real_num_classes": int(real_label_values.size),
+            }
+            self._write_report(filename_prefix, metrics)
+            return metrics
+
+        if real_label_values.size < 2:
+            metrics = {
+                "gate_passed": False,
+                "tstr_applicable": False,
+                "failure_reason": "real_targets_have_fewer_than_two_classes",
+                "synthetic_num_classes": int(synthetic_label_values.size),
+                "real_num_classes": int(real_label_values.size),
+            }
+            self._write_report(filename_prefix, metrics)
+            return metrics
+
+        label_values = np.unique(np.concatenate([synthetic_targets, real_targets], axis=0))
+        label_to_index = {label: index for index, label in enumerate(label_values.tolist())}
+        y_syn = np.asarray([label_to_index[label] for label in synthetic_targets], dtype=np.int64)
+        y_real = np.asarray([label_to_index[label] for label in real_targets], dtype=np.int64)
+
+        if np.min(np.bincount(y_real)) < 2:
+            metrics = {
+                "gate_passed": False,
+                "tstr_applicable": False,
+                "failure_reason": "real_targets_do_not_support_stratified_reference_split",
+                "synthetic_num_classes": int(synthetic_label_values.size),
+                "real_num_classes": int(real_label_values.size),
+            }
+            self._write_report(filename_prefix, metrics)
+            return metrics
+
+        input_dim = int(synthetic_data.shape[-1])
+        num_classes = int(len(label_values))
+
+        tstr_model = _TSTRSequenceClassifier(input_dim=input_dim, num_classes=num_classes, hidden_dim=self.hidden_dim).to(self.device)
+        self._fit_classifier(tstr_model, synthetic_data, y_syn)
+        tstr_metrics = self._evaluate_classifier(tstr_model, real_data, y_real)
+
+        x_real_train, x_real_test, y_real_train, y_real_test = train_test_split(
+            real_data,
+            y_real,
+            test_size=0.3,
+            random_state=42,
+            stratify=y_real,
+        )
+        trtr_model = _TSTRSequenceClassifier(input_dim=input_dim, num_classes=num_classes, hidden_dim=self.hidden_dim).to(self.device)
+        self._fit_classifier(trtr_model, x_real_train, y_real_train)
+        trtr_metrics = self._evaluate_classifier(trtr_model, x_real_test, y_real_test)
+
+        relative_f1 = float(tstr_metrics["f1_macro"] / max(trtr_metrics["f1_macro"], 1e-8))
+        relative_balanced_accuracy = float(
+            tstr_metrics["balanced_accuracy"] / max(trtr_metrics["balanced_accuracy"], 1e-8)
+        )
+        gate_passed = (
+            relative_f1 >= self.min_relative_f1
+            and relative_balanced_accuracy >= self.min_relative_balanced_accuracy
+        )
+
+        metrics = {
+            "gate_passed": bool(gate_passed),
+            "tstr_applicable": True,
+            "synthetic_num_classes": int(synthetic_label_values.size),
+            "real_num_classes": int(real_label_values.size),
+            "tstr_accuracy": tstr_metrics["accuracy"],
+            "tstr_balanced_accuracy": tstr_metrics["balanced_accuracy"],
+            "tstr_f1_macro": tstr_metrics["f1_macro"],
+            "tstr_mcc": tstr_metrics["mcc"],
+            "tstr_cross_entropy": tstr_metrics["cross_entropy"],
+            "trtr_accuracy": trtr_metrics["accuracy"],
+            "trtr_balanced_accuracy": trtr_metrics["balanced_accuracy"],
+            "trtr_f1_macro": trtr_metrics["f1_macro"],
+            "trtr_mcc": trtr_metrics["mcc"],
+            "trtr_cross_entropy": trtr_metrics["cross_entropy"],
+            "relative_f1_macro": relative_f1,
+            "relative_balanced_accuracy": relative_balanced_accuracy,
+            "min_relative_f1": self.min_relative_f1,
+            "min_relative_balanced_accuracy": self.min_relative_balanced_accuracy,
+        }
+
+        self._write_report(
+            filename_prefix,
+            metrics,
+            extra_payload={
+                "num_synthetic_samples": int(len(synthetic_data)),
+                "num_real_samples": int(len(real_data)),
+                "label_values": label_values.tolist(),
+            },
+        )
+        return metrics
+
+
 class SupervisedTaskEvaluator:
     def __init__(
         self,

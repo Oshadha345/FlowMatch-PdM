@@ -11,25 +11,28 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 
 
+_AUTO_MEDIAN_RUN_MAX = "auto_median_run_max"
+
+
 _RUL_DATASET_DEFAULTS: Dict[str, Dict[str, object]] = {
     "CMAPSS": {
         "window_size": 30,
-        "max_rul": 125,
+        "clip_rul": 125,
         "conditions": [1, 2, 3, 4],
     },
     "N-CMAPSS": {
         "window_size": 50,
-        "max_rul": None,
+        "clip_rul": None,
         "conditions": [1, 2, 3, 4, 5, 6, 7, 8],
     },
     "FEMTO": {
         "window_size": 2560,
-        "max_rul": None,
+        "clip_rul": _AUTO_MEDIAN_RUN_MAX,
         "conditions": [1, 2, 3],
     },
     "XJTU-SY": {
         "window_size": 2048,
-        "max_rul": None,
+        "clip_rul": _AUTO_MEDIAN_RUN_MAX,
         "conditions": [1, 2, 3],
     },
 }
@@ -64,15 +67,19 @@ class _WindowFirstRulDataset(Dataset):
         window_size: int,
         num_features: int,
         target_scale: float = 1.0,
+        clip_rul: Optional[float] = None,
         static_context: Optional[Sequence[float]] = None,
     ):
         if target_scale <= 0:
             raise ValueError(f"target_scale must be positive, received {target_scale}.")
+        if clip_rul is not None and clip_rul <= 0:
+            raise ValueError(f"clip_rul must be positive when provided, received {clip_rul}.")
 
         self.base_dataset = base_dataset
         self.window_size = window_size
         self.num_features = num_features
         self.target_scale = float(target_scale)
+        self.clip_rul = None if clip_rul is None else float(clip_rul)
         self.static_context = None if static_context is None else torch.tensor(static_context, dtype=torch.float32)
 
     def __len__(self) -> int:
@@ -108,7 +115,11 @@ class _WindowFirstRulDataset(Dataset):
             context = self.static_context.unsqueeze(0).expand(self.window_size, -1)
             features = torch.cat([features, context], dim=-1)
 
-        scaled_target = torch.as_tensor(target, dtype=torch.float32) / self.target_scale
+        clipped_target = torch.as_tensor(target, dtype=torch.float32)
+        if self.clip_rul is not None:
+            clipped_target = torch.clamp(clipped_target, max=self.clip_rul)
+
+        scaled_target = clipped_target / self.target_scale
         return features.contiguous(), scaled_target
 
 
@@ -128,6 +139,7 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         fd: Optional[Union[int, Sequence[Union[int, str]]]] = None,
         window_size: Optional[int] = None,
         batch_size: int = 128,
+        clip_rul: Optional[Union[int, float, str]] = None,
         append_condition_features: bool = False,
     ):
         super().__init__()
@@ -140,7 +152,8 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         self.batch_size = int(batch_size)
         self.window_size = int(window_size or defaults["window_size"])
         self.append_condition_features = bool(append_condition_features)
-        self.max_rul = defaults["max_rul"]
+        self.requested_clip_rul = clip_rul if clip_rul is not None else defaults["clip_rul"]
+        self.clip_rul: Optional[float] = None
         self.target_scale = 1.0
         self.max_rul_val = self.target_scale
 
@@ -270,7 +283,6 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
                     rul_datasets.CmapssReader(
                         spec.fd,
                         window_size=self.window_size,
-                        max_rul=int(self.max_rul) if self.max_rul is not None else None,
                     )
                 )
             elif self.dataset_name == "N-CMAPSS":
@@ -315,13 +327,20 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
             rul_dm.setup(stage)
 
         if stage == "fit" or stage is None:
+            self.clip_rul = self._resolve_clip_rul_value("dev")
             self.target_scale = self._compute_target_scale()
             self.max_rul_val = self.target_scale
+            if self.clip_rul is not None:
+                print(
+                    f"[{self.dataset_name}] Using clipped RUL ceiling {self.clip_rul:.1f} "
+                    f"and normalized target scale {self.target_scale:.1f}."
+                )
             self.train_ds = self._wrap_split("dev")
             self.val_ds = self._wrap_split("val")
 
         if stage == "test" or stage is None:
-            if self.target_scale <= 0:
+            if self.train_ds is None or self.clip_rul is None or self.target_scale <= 0:
+                self.clip_rul = self._resolve_clip_rul_value("dev")
                 self.target_scale = self._compute_target_scale()
                 self.max_rul_val = self.target_scale
             self.test_ds = self._wrap_split("test")
@@ -331,11 +350,49 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         return not any(len(run_features) > 0 for run_features in features_per_run)
 
     def _compute_target_scale(self) -> float:
-        raw_train_targets = self._flatten_split_targets("dev")
+        raw_train_targets = self._flatten_split_targets("dev", apply_clip=True)
         target_scale = float(np.max(np.abs(raw_train_targets)))
         if target_scale <= 0:
             raise RuntimeError("Encountered non-positive target_scale while preparing scaled RUL targets.")
         return target_scale
+
+    def _normalize_clip_rul(self, clip_rul: Union[int, float, str]) -> Union[float, str]:
+        if isinstance(clip_rul, str):
+            normalized = clip_rul.strip().lower()
+            if normalized in {"auto", _AUTO_MEDIAN_RUN_MAX}:
+                return _AUTO_MEDIAN_RUN_MAX
+            raise ValueError(
+                f"Unsupported clip_rul strategy '{clip_rul}'. Use a positive scalar or '{_AUTO_MEDIAN_RUN_MAX}'."
+            )
+
+        clip_value = float(clip_rul)
+        if clip_value <= 0:
+            raise ValueError(f"clip_rul must be positive, received {clip_rul}.")
+        return clip_value
+
+    def _resolve_clip_rul_value(self, split: str) -> Optional[float]:
+        if self.requested_clip_rul is None:
+            return None
+
+        normalized = self._normalize_clip_rul(self.requested_clip_rul)
+        if isinstance(normalized, float):
+            return normalized
+
+        run_maxima = self._collect_run_maxima(split)
+        if not run_maxima:
+            raise RuntimeError(f"Unable to resolve clip_rul='{normalized}' because split '{split}' has no targets.")
+
+        clip_value = float(np.median(np.asarray(run_maxima, dtype=np.float32)))
+        if clip_value <= 0:
+            raise RuntimeError(
+                f"Resolved non-positive clip value {clip_value} for {self.dataset_name} using strategy '{normalized}'."
+            )
+        return clip_value
+
+    def _clip_targets_array(self, targets: np.ndarray) -> np.ndarray:
+        if self.clip_rul is None:
+            return np.asarray(targets, dtype=np.float32)
+        return np.minimum(np.asarray(targets, dtype=np.float32), self.clip_rul)
 
     def _infer_split_shape(self, rul_dm, split: str) -> Tuple[int, int]:
         features_per_run, _ = rul_dm.data[split]
@@ -378,6 +435,7 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
                     window_size=window_size,
                     num_features=num_features,
                     target_scale=self.target_scale,
+                    clip_rul=self.clip_rul,
                     static_context=self.condition_feature_map[str(index)],
                 )
             )
@@ -421,13 +479,25 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
             pin_memory=True,
         )
 
-    def _flatten_split_targets(self, split: str) -> np.ndarray:
+    def _collect_run_maxima(self, split: str) -> List[float]:
+        maxima: List[float] = []
+        for rul_dm in self.rul_dms:
+            _, targets_per_run = rul_dm.data[split]
+            for run_targets in targets_per_run:
+                run_targets = np.asarray(run_targets, dtype=np.float32).reshape(-1)
+                if run_targets.size > 0:
+                    maxima.append(float(np.max(run_targets)))
+        return maxima
+
+    def _flatten_split_targets(self, split: str, apply_clip: bool = False) -> np.ndarray:
         flattened = []
         for rul_dm in self.rul_dms:
             _, targets_per_run = rul_dm.data[split]
             for run_targets in targets_per_run:
                 run_targets = np.asarray(run_targets, dtype=np.float32).reshape(-1)
                 if run_targets.size > 0:
+                    if apply_clip:
+                        run_targets = self._clip_targets_array(run_targets)
                     flattened.append(run_targets)
 
         if not flattened:
@@ -446,7 +516,7 @@ class FlowMatchRULDataModule(pl.LightningDataModule):
         if not 0.0 < rul_threshold_ratio <= 1.0:
             raise ValueError("rul_threshold_ratio must be in the interval (0, 1].")
 
-        train_targets = self._flatten_split_targets("dev")
+        train_targets = self._flatten_split_targets("dev", apply_clip=True)
         threshold = float(rul_threshold_ratio) * float(self.target_scale)
         degraded_indices = np.flatnonzero(train_targets <= threshold).tolist()
 

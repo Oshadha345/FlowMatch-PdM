@@ -1,7 +1,13 @@
 {
   "schema_version": 1,
-  "last_updated": "2026-04-12T13:51:19.522077+00:00",
-  "errors": [],
+  "last_updated": "2026-04-12T14:57:28.842301+00:00",
+  "errors": [
+    {
+      "timestamp": "2026-04-12T14:57:28.842281+00:00",
+      "key_path": "phase2.FaultDiffusion__engine_rul__CMAPSS.gen_status",
+      "error": "Command failed (exit 1): CUDA_VISIBLE_DEVICES=1 python train_generator.py --track engine_rul --dataset CMAPSS --model FaultDiffusion\n--- last 200 lines ---\n/home/buddhiw/miniconda3/envs/flowmatch_pdm/lib/python3.10/site-packages/lightning_fabric/__init__.py:41: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.\nSeed set to 42\n/home/buddhiw/miniconda3/envs/flowmatch_pdm/lib/python3.10/site-packages/rul_datasets/reader/cmapss.py:323: UserWarning: Run 27 of CMAPSS FD002 is shorter than window size 30 and will be zero-padded.\n  warnings.warn(\n/home/buddhiw/miniconda3/envs/flowmatch_pdm/lib/python3.10/site-packages/rul_datasets/reader/cmapss.py:323: UserWarning: Run 58 of CMAPSS FD002 is shorter than window size 30 and will be zero-padded.\n  warnings.warn(\n/home/buddhiw/miniconda3/envs/flowmatch_pdm/lib/python3.10/site-packages/rul_datasets/reader/cmapss.py:323: UserWarning: Run 82 of CMAPSS FD002 is shorter than window size 30 and will be zero-padded.\n  warnings.warn(\n/home/buddhiw/miniconda3/envs/flowmatch_pdm/lib/python3.10/site-packages/rul_datasets/reader/cmapss.py:323: UserWarning: Run 121 of CMAPSS FD002 is shorter than window size 30 and will be zero-padded.\n  warnings.warn(\n/home/buddhiw/miniconda3/envs/flowmatch_pdm/lib/python3.10/site-packages/rul_datasets/reader/cmapss.py:323: UserWarning: Run 200 of CMAPSS FD002 is shorter than window size 30 and will be zero-padded.\n  warnings.warn(\n/home/buddhiw/miniconda3/envs/flowmatch_pdm/lib/python3.10/site-packages/rul_datasets/reader/cmapss.py:323: UserWarning: Run 222 of CMAPSS FD002 is shorter than window size 30 and will be zero-padded.\n  warnings.warn(\n/home/buddhiw/miniconda3/envs/flowmatch_pdm/lib/python3.10/site-packages/rul_datasets/reader/cmapss.py:323: UserWarning: Run 9 of CMAPSS FD004 is shorter than window size 30 and will be zer"
+    }
+  ],
   "env_check": "done",
   "dataset_acquisition": {
     "CMAPSS": "done",
@@ -161,19 +167,29 @@
       "clf_rmse": 16.687385701563155
     },
     "COTGAN__bearing_fault__CWRU": {
-      "gen_status": "pending",
-      "gen_run_id": null,
-      "clf_status": "pending",
-      "clf_run_id": null
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_192130",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_202042",
+      "ftsd": 187.4978942219023,
+      "mmd": 0.3473498225212097,
+      "discriminative_score": 0.5,
+      "predictive_score_mae": 0.17069390416145325,
+      "clf_f1_macro": 1.0
     },
     "COTGAN__bearing_fault__DEMADICS": {
-      "gen_status": "pending",
-      "gen_run_id": null,
-      "clf_status": "pending",
-      "clf_run_id": null
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_202215",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_202604",
+      "ftsd": 196.8961118902521,
+      "mmd": 0.30032825469970703,
+      "discriminative_score": 0.40909090909090906,
+      "predictive_score_mae": 0.36418917775154114,
+      "clf_f1_macro": 0.9223376623376623
     },
     "FaultDiffusion__engine_rul__CMAPSS": {
-      "gen_status": "pending",
+      "gen_status": "failed",
       "gen_run_id": null,
       "clf_status": "pending",
       "clf_run_id": null

@@ -3,6 +3,11 @@ import sys
 from train_classifier import main
 
 
+LEGACY_ARG_ALIASES = {
+    "--run_id": "--source_run_id",
+}
+
+
 if __name__ == "__main__":
     argv = sys.argv[1:]
     remapped = []
@@ -13,8 +18,8 @@ if __name__ == "__main__":
             skip_next = False
             continue
 
-        if token == "--run_id":
-            remapped.append("--source_run_id")
+        if token in LEGACY_ARG_ALIASES:
+            remapped.append(LEGACY_ARG_ALIASES[token])
             if index + 1 < len(argv):
                 remapped.append(argv[index + 1])
                 skip_next = True
