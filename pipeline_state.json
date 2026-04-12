@@ -1,64 +1,271 @@
 {
   "schema_version": 1,
-  "last_updated": "2026-04-11T20:30:00+00:00",
+  "last_updated": "2026-04-12T13:51:19.522077+00:00",
   "errors": [],
-  "env_check": "pending",
+  "env_check": "done",
   "dataset_acquisition": {
-    "CMAPSS": "pending",
-    "CWRU": "pending",
-    "DEMADICS": "pending",
-    "Paderborn": "pending",
-    "N-CMAPSS": "pending",
-    "FEMTO": "pending",
-    "XJTU-SY": "pending"
+    "CMAPSS": "done",
+    "CWRU": "done",
+    "DEMADICS": "done",
+    "Paderborn": "done",
+    "N-CMAPSS": "done",
+    "FEMTO": "done",
+    "XJTU-SY": "done"
   },
-  "preflight_notebook": "pending",
+  "preflight_notebook": "done",
   "phase0": {
-    "engine_rul__CMAPSS": {"status": "done", "run_id": "run_20260316_125116", "rmse": 16.523341459531764},
-    "engine_rul__N-CMAPSS": {"status": "pending", "run_id": null},
-    "bearing_rul__FEMTO": {"status": "pending", "run_id": null},
-    "bearing_rul__XJTU-SY": {"status": "pending", "run_id": null},
-    "bearing_fault__CWRU": {"status": "done", "run_id": "run_20260316_111110", "f1_macro": 1.0},
-    "bearing_fault__DEMADICS": {"status": "done", "run_id": "run_20260316_112649", "f1_macro": 0.9667774086378739},
-    "bearing_fault__Paderborn": {"status": "done", "run_id": "run_20260316_154854", "f1_macro": 0.99946249924274}
+    "engine_rul__CMAPSS": {
+      "status": "done",
+      "run_id": "run_20260316_125116",
+      "rmse": 16.523
+    },
+    "engine_rul__N-CMAPSS": {
+      "status": "done",
+      "run_id": "run_20260412_143945",
+      "rmse": 10.480766846650472
+    },
+    "bearing_rul__FEMTO": {
+      "status": "done",
+      "run_id": "run_20260412_144621",
+      "rmse": 729.7705118734245
+    },
+    "bearing_rul__XJTU-SY": {
+      "status": "done",
+      "run_id": "run_20260412_145746",
+      "rmse": 518.6190196088069
+    },
+    "bearing_fault__CWRU": {
+      "status": "done",
+      "run_id": "run_20260316_111110",
+      "f1_macro": 1.0
+    },
+    "bearing_fault__DEMADICS": {
+      "status": "done",
+      "run_id": "run_20260316_112649",
+      "f1_macro": 0.9668
+    },
+    "bearing_fault__Paderborn": {
+      "status": "done",
+      "run_id": "run_20260316_154854",
+      "f1_macro": 0.9995
+    }
   },
   "phase1": {
-    "noise__engine_rul__CMAPSS": {"status": "pending", "run_id": null},
-    "noise__bearing_fault__CWRU": {"status": "pending", "run_id": null},
-    "noise__bearing_fault__DEMADICS": {"status": "pending", "run_id": null},
-    "smote__bearing_fault__CWRU": {"status": "pending", "run_id": null},
-    "smote__bearing_fault__DEMADICS": {"status": "pending", "run_id": null},
-    "smote__bearing_fault__Paderborn": {"status": "pending", "run_id": null}
+    "noise__engine_rul__CMAPSS": {
+      "status": "done",
+      "run_id": "run_20260412_150004",
+      "rmse": 19.62365562547972
+    },
+    "noise__bearing_fault__CWRU": {
+      "status": "done",
+      "run_id": "run_20260412_150357",
+      "f1_macro": 1.0
+    },
+    "noise__bearing_fault__DEMADICS": {
+      "status": "done",
+      "run_id": "run_20260412_150544",
+      "f1_macro": 0.9404761904761905
+    },
+    "smote__bearing_fault__CWRU": {
+      "status": "done",
+      "run_id": "run_20260412_150719",
+      "f1_macro": 1.0
+    },
+    "smote__bearing_fault__DEMADICS": {
+      "status": "done",
+      "run_id": "run_20260412_150933",
+      "f1_macro": 0.982015503875969
+    },
+    "smote__bearing_fault__Paderborn": {
+      "status": "done",
+      "run_id": "run_20260412_152911",
+      "f1_macro": 0.9997883769171322
+    }
   },
   "phase2": {
-    "TimeVAE__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "TimeVAE__bearing_fault__CWRU": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "TimeVAE__bearing_fault__DEMADICS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "TimeGAN__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "TimeGAN__bearing_fault__CWRU": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "TimeGAN__bearing_fault__DEMADICS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "COTGAN__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "COTGAN__bearing_fault__CWRU": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "COTGAN__bearing_fault__DEMADICS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "FaultDiffusion__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "FaultDiffusion__bearing_fault__CWRU": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "FaultDiffusion__bearing_fault__DEMADICS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "DiffusionTS__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "DiffusionTS__bearing_fault__CWRU": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "DiffusionTS__bearing_fault__DEMADICS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "TimeFlow__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "TimeFlow__bearing_fault__CWRU": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "TimeFlow__bearing_fault__DEMADICS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "FlowMatch__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "FlowMatch__bearing_fault__CWRU": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "FlowMatch__bearing_fault__DEMADICS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null}
+    "TimeVAE__engine_rul__CMAPSS": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_155927",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_161327",
+      "ftsd": 2.4436410389891137,
+      "mmd": 0.24714863300323486,
+      "discriminative_score": 0.4292682926829269,
+      "predictive_score_mae": 0.12163633108139038,
+      "clf_rmse": 17.06775760342802
+    },
+    "TimeVAE__bearing_fault__CWRU": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_164803",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_165735",
+      "ftsd": 285.63071741701174,
+      "mmd": 0.336916446685791,
+      "discriminative_score": 0.0,
+      "predictive_score_mae": 0.17362552881240845,
+      "clf_f1_macro": 1.0
+    },
+    "TimeVAE__bearing_fault__DEMADICS": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_165912",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_170252",
+      "ftsd": 177.46371262212062,
+      "mmd": 0.25460243225097656,
+      "discriminative_score": 0.40909090909090906,
+      "predictive_score_mae": 0.34328949451446533,
+      "clf_f1_macro": 0.8709090909090909
+    },
+    "TimeGAN__engine_rul__CMAPSS": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_170349",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_172012",
+      "ftsd": 3.0111614712621084,
+      "mmd": 0.6974930763244629,
+      "discriminative_score": 0.5,
+      "predictive_score_mae": 0.27160143852233887,
+      "clf_rmse": 17.57805902765398
+    },
+    "TimeGAN__bearing_fault__CWRU": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_172407",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_173231",
+      "ftsd": 151.18340045779252,
+      "mmd": 0.004131674766540527,
+      "discriminative_score": 0.061258278145695344,
+      "predictive_score_mae": 0.05206553637981415,
+      "clf_f1_macro": 1.0
+    },
+    "TimeGAN__bearing_fault__DEMADICS": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_173417",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_173706",
+      "ftsd": 193.2867611502967,
+      "mmd": 0.318021297454834,
+      "discriminative_score": 0.5,
+      "predictive_score_mae": 0.411296546459198,
+      "clf_f1_macro": 0.9382059800664452
+    },
+    "COTGAN__engine_rul__CMAPSS": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260412_173805",
+      "clf_status": "done",
+      "clf_run_id": "run_20260412_191759",
+      "ftsd": 3.155814173749781,
+      "mmd": 0.5533636808395386,
+      "discriminative_score": 0.5,
+      "predictive_score_mae": 0.2504150867462158,
+      "clf_rmse": 16.687385701563155
+    },
+    "COTGAN__bearing_fault__CWRU": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "COTGAN__bearing_fault__DEMADICS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FaultDiffusion__engine_rul__CMAPSS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FaultDiffusion__bearing_fault__CWRU": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FaultDiffusion__bearing_fault__DEMADICS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "DiffusionTS__engine_rul__CMAPSS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "DiffusionTS__bearing_fault__CWRU": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "DiffusionTS__bearing_fault__DEMADICS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "TimeFlow__engine_rul__CMAPSS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "TimeFlow__bearing_fault__CWRU": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "TimeFlow__bearing_fault__DEMADICS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch__engine_rul__CMAPSS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch__bearing_fault__CWRU": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch__bearing_fault__DEMADICS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    }
   },
   "phase3": {},
   "top_models": [],
   "phase4": {
-    "FlowMatch_no_prior__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "FlowMatch_no_tccm__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null},
-    "FlowMatch_no_lap__engine_rul__CMAPSS": {"gen_status": "pending", "gen_run_id": null, "clf_status": "pending", "clf_run_id": null}
+    "FlowMatch_no_prior__engine_rul__CMAPSS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch_no_tccm__engine_rul__CMAPSS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch_no_lap__engine_rul__CMAPSS": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    }
   },
   "final_report": "pending"
 }

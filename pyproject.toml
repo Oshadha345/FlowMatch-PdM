@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "flowmatch-pdm"
+version = "0.1.0"
+description = "State-Space Flow Matching for Predictive Maintenance Data Augmentation"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+readme = "README.md"
+keywords = ["predictive-maintenance", "flow-matching", "time-series", "data-augmentation"]
+
+[tool.setuptools]
+packages = ["flowmatchPdM", "src", "datasets"]

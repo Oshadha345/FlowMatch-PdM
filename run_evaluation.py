@@ -185,11 +185,22 @@ def evaluate_generator_run(
         conditions = conditions.unsqueeze(-1)
 
     with torch.no_grad():
-        if model == "FlowMatch":
-            synthetic = generator.generate(conditions=conditions, num_samples=len(real_data))
-        else:
-            synthetic = generator.generate(num_samples=len(real_data), conditions=conditions)
-    synthetic_data = synthetic.detach().cpu().numpy().astype(np.float32)
+        # Batch generation to avoid OOM on large window_size datasets
+        gen_batch = 256
+        total = len(real_data)
+        chunks = []
+        for start in range(0, total, gen_batch):
+            end = min(start + gen_batch, total)
+            cond_chunk = conditions[start:end] if conditions is not None else None
+            n = end - start
+            if model == "FlowMatch":
+                chunk = generator.generate(conditions=cond_chunk, num_samples=n)
+            else:
+                chunk = generator.generate(num_samples=n, conditions=cond_chunk)
+            chunks.append(chunk.cpu())
+            torch.cuda.empty_cache()
+        synthetic = torch.cat(chunks, dim=0)
+    synthetic_data = synthetic.numpy().astype(np.float32)
 
     generator_session.save_numpy("generator_datas/synthetic_data.npy", synthetic_data)
     generator_session.save_numpy("generator_datas/synthetic_targets.npy", real_targets)

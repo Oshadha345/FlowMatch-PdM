@@ -7,6 +7,8 @@ results/
 __pycache__/
 *.py[cod]
 *.egg-info/
+dist/
+build/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -18,3 +20,22 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Datasets (large / downloaded)
+datasets/processed/
+datasets/*_raw/
+~/.rul-datasets/
+
+# Logs
+logs/*.log
+FAILED.md
+
+# Wheels
+whl/
+
+# ---------- FORCE-TRACK ----------
+!pipeline_state.json
+!docs/
+!configs/
+!notebooks/*.ipynb
+!.github/

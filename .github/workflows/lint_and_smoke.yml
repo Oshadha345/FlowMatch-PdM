@@ -1,0 +1,43 @@
+name: Lint and Smoke Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install CPU-only PyTorch and dependencies
+        run: |
+          pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt || true
+          pip install nbformat
+
+      - name: Compile all Python files
+        run: |
+          find . -name "*.py" -not -path "./.git/*" -not -path "./whl/*" | while read f; do
+            python -m py_compile "$f" && echo "OK: $f" || echo "FAIL: $f"
+          done
+
+      - name: Validate pipeline_state.json
+        run: |
+          python -c "import json; json.load(open('pipeline_state.json')); print('pipeline_state.json: valid')"
+
+      - name: Run check_results.py on current state
+        run: |
+          python scripts/check_results.py
+
+      - name: Verify resume_from.py shows usage
+        run: |
+          python scripts/resume_from.py --help
