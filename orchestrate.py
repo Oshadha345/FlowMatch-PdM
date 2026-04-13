@@ -533,9 +533,13 @@ def run_phase0(state: dict) -> None:
     logger.info("=" * 60)
 
     phase0_jobs = [
+        ("engine_rul", "CMAPSS"),
         ("engine_rul", "N-CMAPSS"),
         ("bearing_rul", "FEMTO"),
         ("bearing_rul", "XJTU-SY"),
+        ("bearing_fault", "CWRU"),
+        ("bearing_fault", "DEMADICS"),
+        ("bearing_fault", "Paderborn"),
     ]
 
     for track, dataset in phase0_jobs:
@@ -669,7 +673,7 @@ def _run_generator_and_classifier(
             sys.exit(1)
 
     # --- Classifier step ---
-    if entry["clf_status"] != "done":
+    if entry["clf_status"] not in ("done", "skipped_tstr"):
         gen_run_id = entry["gen_run_id"]
         logger.info("  Augmented classifier: %s synth on %s / %s", gen_model, track, dataset)
 
@@ -682,7 +686,14 @@ def _run_generator_and_classifier(
                 f"Classifier+{gen_model} {track}/{dataset}",
             )
         except (RuntimeError, TimeoutError) as exc:
-            mark_failed(state, f"{phase_key}.clf_status", str(exc))
+            err_str = str(exc)
+            if "TSTR gate rejected" in err_str:
+                logger.warning("  TSTR gate rejected %s on %s/%s — skipping classifier", gen_model, track, dataset)
+                entry["clf_status"] = "skipped_tstr"
+                entry["clf_run_id"] = None
+                save_state(state)
+                return
+            mark_failed(state, f"{phase_key}.clf_status", err_str)
             sys.exit(1)
 
         try:
@@ -718,7 +729,7 @@ def run_phase2(state: dict) -> None:
             })
             state["phase2"][key] = entry
 
-            if entry["gen_status"] == "done" and entry["clf_status"] == "done":
+            if entry["gen_status"] == "done" and entry["clf_status"] in ("done", "skipped_tstr"):
                 logger.info("Phase 2: %s already complete — skipping", key)
                 continue
 
@@ -794,7 +805,7 @@ def run_phase3(state: dict) -> None:
                 save_state(state)
 
             entry = state["phase3"][key]
-            if entry["gen_status"] == "done" and entry["clf_status"] == "done":
+            if entry["gen_status"] == "done" and entry["clf_status"] in ("done", "skipped_tstr"):
                 logger.info("Phase 3: %s already complete — skipping", key)
                 continue
 
@@ -818,7 +829,7 @@ def run_phase4_ablations(state: dict) -> None:
         })
         state["phase4"][key] = entry
 
-        if entry["gen_status"] == "done" and entry["clf_status"] == "done":
+        if entry["gen_status"] == "done" and entry["clf_status"] in ("done", "skipped_tstr"):
             logger.info("Phase 4: %s already complete — skipping", key)
             continue
 
@@ -1028,9 +1039,9 @@ def _generate_result_logger(state: dict) -> None:
         ce = state["phase2"].get(cmapss_key, {})
         we = state["phase2"].get(cwru_key, {})
         de = state["phase2"].get(dem_key, {})
-        cmapss_val = _fmt(ce.get("clf_rmse")) if ce.get("clf_status") == "done" else "-"
-        cwru_val = _fmt(we.get("clf_f1_macro")) if we.get("clf_status") == "done" else "-"
-        dem_val = _fmt(de.get("clf_f1_macro")) if de.get("clf_status") == "done" else "-"
+        cmapss_val = _fmt(ce.get("clf_rmse")) if ce.get("clf_status") == "done" else ("TSTR-skip" if ce.get("clf_status") == "skipped_tstr" else "-")
+        cwru_val = _fmt(we.get("clf_f1_macro")) if we.get("clf_status") == "done" else ("TSTR-skip" if we.get("clf_status") == "skipped_tstr" else "-")
+        dem_val = _fmt(de.get("clf_f1_macro")) if de.get("clf_status") == "done" else ("TSTR-skip" if de.get("clf_status") == "skipped_tstr" else "-")
         bold = "**" if gen == "FlowMatch" else ""
         label = f"{bold}+ {gen}{bold}"
         a(f"| {label} | {cmapss_val} | {cwru_val} | {dem_val} | - |")

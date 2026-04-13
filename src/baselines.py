@@ -314,8 +314,13 @@ class UNet1DDenoiser(nn.Module):
         mid = self.mid2(self.mid_attn(self.mid1(d3, time_emb)), time_emb)
 
         u2 = self.upsample2(mid)
+        # Pad/trim to match skip connection when window_size is not divisible by 4
+        if u2.shape[2] != d2.shape[2]:
+            u2 = F.pad(u2, (0, d2.shape[2] - u2.shape[2]))
         u2 = self.up2(torch.cat([u2, d2], dim=1), time_emb)
         u1 = self.upsample1(u2)
+        if u1.shape[2] != d1.shape[2]:
+            u1 = F.pad(u1, (0, d1.shape[2] - u1.shape[2]))
         u1 = self.up1(torch.cat([u1, d1], dim=1), time_emb)
 
         out = self.out_proj(F.silu(self.out_norm(u1)))

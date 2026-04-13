@@ -13,7 +13,7 @@ trainer:
     rul: 32
     fault: "16-mixed"
     generator: "16-mixed"
-  patience: 10
+  patience: 30
 
 # Dataset Specific Parameters
 datasets:
@@ -32,7 +32,7 @@ datasets:
     track: "engine_rul"
     window_size: 50
     batch_size: 128
-    max_rul: null
+    max_rul: 125
     conditions: [1, 2, 3, 4, 5, 6, 7, 8]
     split_strategy: "predefined"
 
@@ -40,7 +40,7 @@ datasets:
     track: "bearing_rul"
     window_size: 2560
     batch_size: 64
-    max_rul: null
+    max_rul: 1500
     # Use FD ids to preserve the reader's canonical dev/val/test split.
     conditions: [1, 2, 3]
     append_condition_features: true
@@ -50,7 +50,7 @@ datasets:
     track: "bearing_rul"
     window_size: 2048
     batch_size: 64
-    max_rul: null
+    max_rul: 1200
     conditions: [1, 2, 3]
     split_strategy: "predefined"
 
