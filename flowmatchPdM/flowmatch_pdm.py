@@ -4,10 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torchdiffeq import odeint
 import functools
 
-from flowmatchPdM.model.mamba_backbone import BidirectionalMambaBlock
+from flowmatchPdM.model.mamba_backbone import PatchMambaVectorField
 from flowmatchPdM.model.harmonic_prior import DynamicHarmonicPrior
 from flowmatchPdM.model.tccm_loss import TCCMManifoldLoss
 
@@ -22,27 +21,36 @@ class FlowMatchPdM(pl.LightningModule):
         self.input_dim = input_dim
         self.window_size = window_size
         self.d_model = config.get('mamba_d_model', 128)
+        self.d_state = config.get('mamba_d_state', 16)
         self.euler_steps = config.get('euler_steps', 100)
-        
+        self.patch_size = int(config.get('patch_size', 32))
+        self.field_clamp = float(config.get('field_clamp', 10.0))
+        self.spectral_lambda = float(config.get('spectral_lambda', 0.1))
+        self.use_harmonic_prior = bool(config.get('use_harmonic_prior', True))
+        self.use_tccm = bool(config.get('use_tccm', True))
+
         # 1. Physics-Informed Prior
         # Assumes condition_dim is 1 for this example (e.g., motor load or HI)
         self.harmonic_prior = DynamicHarmonicPrior(condition_dim=1, window_size=window_size)
-        
-        # 2. Vector Field Estimator (Mamba Backbone)
-        # Project input to Mamba dimension
-        self.input_proj = nn.Linear(input_dim + 1, self.d_model) # +1 for time scalar
-        
-        # Stack multiple Mamba blocks
-        self.mamba_blocks = nn.ModuleList([
-            BidirectionalMambaBlock(d_model=self.d_model, d_state=config.get('mamba_d_state', 16))
-            for _ in range(3) # 3 layers of Mamba
-        ])
-        
-        # Project back to data dimension
-        self.output_proj = nn.Linear(self.d_model, input_dim)
-        
+
+        # 2. Patch-Flow Mamba Vector Field Estimator
+        self.vector_field = PatchMambaVectorField(
+            raw_seq_len=window_size,
+            patch_size=self.patch_size,
+            channels=input_dim,
+            d_model=self.d_model,
+            d_state=self.d_state,
+            d_conv=int(config.get("d_conv", 4)),
+            expand=int(config.get("expand", 2)),
+            num_layers=int(config.get("num_mamba_layers", 3)),
+        )
+        self.mamba_blocks = self.vector_field.mamba_blocks
+
         # 3. Constraint & Pruning Infrastructure
-        self.tccm_loss = TCCMManifoldLoss(lambda_weight=config.get('tccm_lambda', 10.0))
+        self.tccm_loss = TCCMManifoldLoss(
+            lambda_weight=config.get('tccm_lambda', 0.1),
+            patch_size=self.patch_size,
+        )
         
         # LAP Tracking Dictionaries
         self.mamba_activations = {}
@@ -91,15 +99,25 @@ class FlowMatchPdM(pl.LightningModule):
         """
         Predicts the velocity field v_theta(t, x).
         """
-        # Inject time scalar into features
-        t_tensor = torch.full((x.shape[0], x.shape[1], 1), t.item(), device=self.device)
-        x_in = torch.cat([x, t_tensor], dim=-1)
-        
-        hidden = self.input_proj(x_in)
-        for block in self.mamba_blocks:
-            hidden = block(hidden)
-            
-        return self.output_proj(hidden)
+        return self.vector_field(x, t, conditions)
+
+    def _sample_base_distribution(
+        self,
+        conditions: torch.Tensor,
+        batch_size: int,
+        reference: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if not self.use_harmonic_prior:
+            if reference is not None:
+                return torch.randn_like(reference)
+            return torch.randn(batch_size, self.window_size, self.input_dim, device=self.device)
+
+        x0 = self.harmonic_prior(conditions, batch_size, self.device)
+        if x0.shape[-1] != self.input_dim:
+            x0 = x0.repeat(1, 1, self.input_dim)
+        if reference is not None:
+            x0 = x0.to(dtype=reference.dtype)
+        return x0
 
     def training_step(self, batch, batch_idx):
         # x1: Target real degradation data, cond: e.g., Health Index or Load
@@ -109,15 +127,11 @@ class FlowMatchPdM(pl.LightningModule):
         # Ensure condition is 2D
         if cond.dim() == 1:
             cond = cond.unsqueeze(-1).float()
+        else:
+            cond = cond.float()
             
         # 1. Base Distribution: Dynamic Conditioned Harmonic Prior
-        # This replaces standard pure noise!
-        x0 = self.harmonic_prior(cond, batch_size, self.device)
-        
-        # Ensure x0 dimensions match x1 (CWRU is 1D, CMAPSS is 14D)
-        if x0.shape[-1] != x1.shape[-1]:
-            # Simple padding/projection if harmonic prior is strictly 1D but data is multi-variate
-            x0 = x0.repeat(1, 1, x1.shape[-1])
+        x0 = self._sample_base_distribution(cond, batch_size, reference=x1)
         
         # 2. Sample random time t in [0, 1]
         t = torch.rand(batch_size, 1, 1, device=self.device)
@@ -127,18 +141,24 @@ class FlowMatchPdM(pl.LightningModule):
         ut = x1 - x0 # Target vector field
         
         # 4. Predict vector field via Mamba
-        vt = self.forward(t.mean(), xt, cond)
+        vt = self.forward(t.view(batch_size, 1), xt, cond)
         
         # 5. Calculate Standard Flow Matching Loss
         fm_loss = F.mse_loss(vt, ut)
-        
-        # 6. Apply TCCM Hyper-Manifold Penalty (Enforce physics constraint)
-        # We pass the predicted vector field and the condition (RUL/HI)
-        tccm_penalty = self.tccm_loss(vt, cond)
-        
-        loss = fm_loss + tccm_penalty
+        fft_pred = torch.fft.rfft(vt, dim=1)
+        fft_target = torch.fft.rfft(ut, dim=1)
+        spectral_loss = F.l1_loss(torch.abs(fft_pred), torch.abs(fft_target))
+
+        # 6. Apply Energy-Envelope TCCM Penalty
+        if self.use_tccm:
+            tccm_penalty = self.tccm_loss(vt, cond)
+        else:
+            tccm_penalty = vt.new_zeros(())
+
+        loss = fm_loss + (self.spectral_lambda * spectral_loss) + tccm_penalty
         
         self.log('train_fm_loss', fm_loss, prog_bar=True)
+        self.log('train_spectral_loss', spectral_loss, prog_bar=False)
         self.log('train_tccm_penalty', tccm_penalty, prog_bar=True)
         self.log('train_loss', loss)
         return loss
@@ -151,16 +171,20 @@ class FlowMatchPdM(pl.LightningModule):
         """
         Generates synthetic degradation data by solving the ODE.
         """
-        # Start at our physics-informed harmonic prior, NOT pure noise
-        x0 = self.harmonic_prior(conditions, num_samples, self.device)
-        if x0.shape[-1] != self.input_dim:
-            x0 = x0.repeat(1, 1, self.input_dim)
-            
-        t_span = torch.linspace(0.0, 1.0, self.euler_steps, device=self.device)
-        
-        # Solve the ODE using standard Euler method
-        print(f"[FlowMatch-PdM] Solving Mamba ODE over {self.euler_steps} steps...")
-        trajectory = odeint(lambda t, x: self.forward(t, x, conditions), x0, t_span, method='euler')
-        
-        return trajectory[-1]
+        if conditions.dim() == 1:
+            conditions = conditions.unsqueeze(-1)
+        conditions = conditions.to(self.device).float()
+
+        x_t = self._sample_base_distribution(conditions, num_samples)
+        dt = 1.0 / max(self.euler_steps, 1)
+
+        print(f"[FlowMatch-PdM] Solving patched Mamba Euler flow over {self.euler_steps} steps...")
+        for step in range(self.euler_steps):
+            t_value = step / max(self.euler_steps - 1, 1)
+            t_tensor = torch.full((num_samples, 1), t_value, device=self.device, dtype=x_t.dtype)
+            v_t = self.forward(t_tensor, x_t, conditions)
+            v_t = torch.clamp(v_t, min=-self.field_clamp, max=self.field_clamp)
+            x_t = x_t + v_t * dt
+
+        return x_t
     

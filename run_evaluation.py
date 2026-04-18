@@ -8,9 +8,11 @@ import torch
 import yaml
 
 from flowmatchPdM.flowmatch_pdm import FlowMatchPdM
-from src.baselines import COTGAN, DiffusionTS, FaultDiffusion, TimeFlow, TimeGAN, TimeVAE
-from src.classifier import CNN1DClassifier, LSTMRegressor
+from flowmatchPdM.flowmatch_pdm_raw_backup import FlowMatchPdMRawBackup
+from src.baselines import COTGAN, DiffusionTS, FaultDiffusion, TimeFlow
+from src.classifier import CNN1DRegressor, LSTMRegressor, MambaRULRegressor, TransformerRegressor
 from src.evaluation import SupervisedTaskEvaluator, TimeSeriesEvaluator
+from src.utils.checkpoint_utils import load_lightning_module_checkpoint
 from src.utils.data_helper import get_data_module, get_dataset_config
 from src.utils.logger_utils import (
     SessionManager,
@@ -20,21 +22,41 @@ from src.utils.logger_utils import (
 )
 
 
-GENERATOR_CHOICES = ["TimeVAE", "TimeGAN", "DiffusionTS", "TimeFlow", "COTGAN", "FaultDiffusion", "FlowMatch"]
-CLASSIFIER_CHOICES = ["baseline", "LSTMRegressor", "CNN1DClassifier"]
+GENERATOR_CHOICES = ["DiffusionTS", "TimeFlow", "COTGAN", "FaultDiffusion", "FlowMatch", "CropFlow"]
+CLASSIFIER_CHOICES = [
+    "baseline",
+    "mamba",
+    "MambaRegressor",
+    "lstm",
+    "LSTMRegressor",
+    "cnn1d",
+    "CNN1DRegressor",
+    "transformer",
+    "TransformerRegressor",
+]
 
 
 def _resolve_classifier_name(track: str, requested_model: str) -> str:
-    if requested_model not in CLASSIFIER_CHOICES:
+    normalized = str(requested_model).strip().lower()
+    if normalized not in {choice.lower() for choice in CLASSIFIER_CHOICES}:
         raise ValueError(f"Unsupported classifier model: {requested_model}. Choose from {CLASSIFIER_CHOICES}.")
 
-    default_model = "LSTMRegressor" if "rul" in track else "CNN1DClassifier"
-    model_name = default_model if requested_model == "baseline" else requested_model
+    if normalized in {"baseline", "mamba", "mambaregressor"}:
+        model_name = "MambaRegressor"
+    elif normalized in {"lstm", "lstmregressor"}:
+        model_name = "LSTMRegressor"
+    elif normalized in {"cnn1d", "cnn1dregressor"}:
+        model_name = "CNN1DRegressor"
+    elif normalized in {"transformer", "transformerregressor"}:
+        model_name = "TransformerRegressor"
 
-    if "rul" in track and model_name != "LSTMRegressor":
-        raise ValueError(f"Track '{track}' requires LSTMRegressor, received '{model_name}'.")
-    if track == "bearing_fault" and model_name != "CNN1DClassifier":
-        raise ValueError(f"Track '{track}' requires CNN1DClassifier, received '{model_name}'.")
+    if "rul" in track and model_name not in {
+        "LSTMRegressor",
+        "CNN1DRegressor",
+        "TransformerRegressor",
+        "MambaRegressor",
+    }:
+        raise ValueError(f"Track '{track}' requires an RUL regressor, received '{model_name}'.")
     return model_name
 
 
@@ -97,13 +119,16 @@ def _collect_dataset_arrays(dataset) -> Tuple[np.ndarray, np.ndarray]:
     return x_array, y_array
 
 
-def _load_generator(model_name: str, checkpoint_path: Path, input_dim: int, window_size: int, config: dict):
+def _load_generator(
+    model_name: str,
+    checkpoint_path: Path,
+    input_dim: int,
+    window_size: int,
+    config: dict,
+    generator_variant: Optional[str] = None,
+):
     common_kwargs = {"map_location": "cpu"}
 
-    if model_name == "TimeVAE":
-        return TimeVAE.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size, **common_kwargs)
-    if model_name == "TimeGAN":
-        return TimeGAN.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size, **common_kwargs)
     if model_name == "DiffusionTS":
         return DiffusionTS.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size, **common_kwargs)
     if model_name == "TimeFlow":
@@ -112,7 +137,15 @@ def _load_generator(model_name: str, checkpoint_path: Path, input_dim: int, wind
         return COTGAN.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size, **common_kwargs)
     if model_name == "FaultDiffusion":
         return FaultDiffusion.load_from_checkpoint(str(checkpoint_path), input_dim=input_dim, window_size=window_size, **common_kwargs)
-    if model_name == "FlowMatch":
+    if model_name in {"FlowMatch", "CropFlow"} and generator_variant == "raw_backup":
+        return FlowMatchPdMRawBackup.load_from_checkpoint(
+            str(checkpoint_path),
+            input_dim=input_dim,
+            window_size=window_size,
+            config=config["generative"]["flowmatch_pdm"],
+            **common_kwargs,
+        )
+    if model_name in {"FlowMatch", "CropFlow"}:
         return FlowMatchPdM.load_from_checkpoint(
             str(checkpoint_path),
             input_dim=input_dim,
@@ -125,21 +158,38 @@ def _load_generator(model_name: str, checkpoint_path: Path, input_dim: int, wind
 
 def _load_classifier(model_name: str, checkpoint_path: Path):
     if model_name == "LSTMRegressor":
-        model = LSTMRegressor.load_from_checkpoint(str(checkpoint_path), map_location="cpu")
-    elif model_name == "CNN1DClassifier":
-        model = CNN1DClassifier.load_from_checkpoint(str(checkpoint_path), map_location="cpu")
+        model = load_lightning_module_checkpoint(LSTMRegressor, checkpoint_path, map_location="cpu")
+    elif model_name == "CNN1DRegressor":
+        model = load_lightning_module_checkpoint(CNN1DRegressor, checkpoint_path, map_location="cpu")
+    elif model_name == "TransformerRegressor":
+        model = load_lightning_module_checkpoint(TransformerRegressor, checkpoint_path, map_location="cpu")
+    elif model_name == "MambaRegressor":
+        model = load_lightning_module_checkpoint(MambaRULRegressor, checkpoint_path, map_location="cpu")
     else:
         raise ValueError(f"Unsupported classifier model: {model_name}")
     model.eval()
     return model
 
 
+def _load_cached_metrics(metrics_path: Path) -> Dict[str, float]:
+    with metrics_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    metrics = payload.get("metrics", payload)
+    if not isinstance(metrics, dict):
+        raise ValueError(f"Invalid metrics payload in {metrics_path}")
+    return metrics
+
+
 def _load_reference_model(track: str, dataset: str):
-    reference_model_name = "LSTMRegressor" if "rul" in track else "CNN1DClassifier"
-    reference_session = SessionManager.from_existing(track, dataset, reference_model_name)
-    checkpoint_path = _resolve_best_checkpoint(reference_session, "best_model_classifier")
-    model = _load_classifier(reference_model_name, checkpoint_path)
-    return reference_model_name, reference_session, checkpoint_path, model
+    reference_model_name = "MambaRegressor"
+    try:
+        reference_session = SessionManager.from_existing(track, dataset, reference_model_name)
+        checkpoint_path = _resolve_best_checkpoint(reference_session, "best_model_classifier")
+        model = _load_classifier(reference_model_name, checkpoint_path)
+        return reference_model_name, reference_session, checkpoint_path, model
+    except FileNotFoundError:
+        return None, None, None, None
 
 
 def evaluate_generator_run(
@@ -156,6 +206,8 @@ def evaluate_generator_run(
     experiment_model_name = resolve_experiment_model_name(model, ablation)
     generator_session = SessionManager.from_existing(track, dataset, experiment_model_name, run_id=run_id)
     config = _load_run_config(generator_session, config_path)
+    manifest = _read_manifest(generator_session)
+    generator_variant = manifest.get("generator_variant")
 
     dataset_cfg = get_dataset_config(config, dataset)
     dm = get_data_module(
@@ -176,7 +228,7 @@ def evaluate_generator_run(
     window_size = int(dataset_cfg["window_size"])
 
     checkpoint_path = _resolve_best_checkpoint(generator_session, "best_models_generator")
-    generator = _load_generator(model, checkpoint_path, input_dim, window_size, config)
+    generator = _load_generator(model, checkpoint_path, input_dim, window_size, config, generator_variant=generator_variant)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     generator.eval().to(device)
 
@@ -193,7 +245,7 @@ def evaluate_generator_run(
             end = min(start + gen_batch, total)
             cond_chunk = conditions[start:end] if conditions is not None else None
             n = end - start
-            if model == "FlowMatch":
+            if model in {"FlowMatch", "CropFlow"}:
                 chunk = generator.generate(conditions=cond_chunk, num_samples=n)
             else:
                 chunk = generator.generate(num_samples=n, conditions=cond_chunk)
@@ -227,8 +279,8 @@ def evaluate_generator_run(
             "generator_run_id": generator_session.run_id,
             "generator_checkpoint": str(checkpoint_path),
             "reference_model": reference_model_name,
-            "reference_run_id": reference_session.run_id,
-            "reference_checkpoint": str(reference_ckpt),
+            "reference_run_id": None if reference_session is None else reference_session.run_id,
+            "reference_checkpoint": None if reference_ckpt is None else str(reference_ckpt),
             "num_generated_samples": int(len(synthetic_data)),
             "window_size": window_size,
             "input_dim": input_dim,
@@ -239,7 +291,7 @@ def evaluate_generator_run(
             "evaluation_complete": True,
             "generator_checkpoint": str(checkpoint_path),
             "reference_model": reference_model_name,
-            "reference_checkpoint": str(reference_ckpt),
+            "reference_checkpoint": None if reference_ckpt is None else str(reference_ckpt),
             "evaluation_metrics": metrics,
         }
     )
@@ -275,6 +327,13 @@ def evaluate_classifier_run(
     )
     classifier_session = SessionManager.from_existing(track, dataset, experiment_model_name, run_id=run_id)
     config = _load_run_config(classifier_session, config_path)
+    cached_metrics_path = classifier_session.paths["evaluation_results"] / "classifier_metrics.json"
+    manifest = classifier_session.read_manifest()
+
+    if manifest.get("classifier_evaluation_complete") and cached_metrics_path.exists():
+        metrics = _load_cached_metrics(cached_metrics_path)
+        print(f"[Classifier Eval] Reusing existing metrics from {cached_metrics_path}")
+        return metrics, classifier_session
 
     dataset_cfg = get_dataset_config(config, dataset)
     is_rul = "rul" in track
@@ -315,9 +374,9 @@ def evaluate_classifier_run(
 def main():
     parser = argparse.ArgumentParser(description="Re-evaluate an existing classifier or generator run.")
     parser.add_argument("--eval_mode", type=str, default="generator", choices=["classifier", "generator"])
-    parser.add_argument("--track", type=str, required=True, help="engine_rul, bearing_rul, or bearing_fault")
-    parser.add_argument("--dataset", type=str, required=True, help="CMAPSS, FEMTO, CWRU, etc.")
-    parser.add_argument("--model", type=str, required=True, help="Classifier or generator model name.")
+    parser.add_argument("--track", type=str, required=True, help="Active pivot track: bearing_rul")
+    parser.add_argument("--dataset", type=str, required=True, help="Active pivot datasets: FEMTO or XJTU-SY")
+    parser.add_argument("--model", "--eval_model", dest="model", type=str, required=True, help="Classifier or generator model name.")
     parser.add_argument("--run_id", type=str, default=None, help="Run identifier to re-evaluate. Defaults to latest.")
     parser.add_argument("--aug", type=str, default="none", help="Classifier classical augmentation mode.")
     parser.add_argument("--source_gen_model", "--gen_model", dest="source_gen_model", type=str, default=None, help="Source generator model for synthetic classifier augmentation.")

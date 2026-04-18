@@ -9,7 +9,7 @@ SESSION="flowmatch"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd "$SCRIPT_DIR"
-mkdir -p logs results/final_report
+mkdir -p logs results
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "Session '$SESSION' already exists. Attaching..."
@@ -19,9 +19,9 @@ fi
 
 tmux new-session -d -s "$SESSION" -x 220 -y 50
 
-# Send the full run command into the tmux pane
+# Send the RUL pivot execution into the tmux pane
 tmux send-keys -t "$SESSION" \
-  "cd $SCRIPT_DIR && source /home/buddhiw/miniconda3/etc/profile.d/conda.sh && conda activate flowmatch_pdm && python orchestrate.py 2>&1 | tee logs/orchestrator_\$(date +%Y%m%d_%H%M%S).log" \
+  "cd $SCRIPT_DIR && source /home/buddhiw/miniconda3/etc/profile.d/conda.sh && conda activate flowmatch_pdm && bash final_execution.sh 2>&1 | tee logs/final_execution_\$(date +%Y%m%d_%H%M%S).log" \
   Enter
 
 echo "Launched in tmux session '$SESSION'."

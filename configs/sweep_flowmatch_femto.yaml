@@ -1,0 +1,37 @@
+program: train_generator.py
+method: bayes
+metric:
+  name: evaluation/ftsd
+  goal: minimize
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --track
+  - bearing_rul
+  - --dataset
+  - FEMTO
+  - --model
+  - FlowMatch
+  - --use_wandb
+  - --config
+  - configs/default_config.yaml
+  - --lr
+  - ${lr}
+  - --euler_steps
+  - ${euler_steps}
+  - --tccm_lambda
+  - ${tccm_lambda}
+parameters:
+  lr:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.001
+  tccm_lambda:
+    distribution: log_uniform_values
+    min: 0.01
+    max: 1.0
+  euler_steps:
+    distribution: int_uniform
+    min: 100
+    max: 500

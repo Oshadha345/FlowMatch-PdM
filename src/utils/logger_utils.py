@@ -1,9 +1,11 @@
 import json
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pytorch_lightning as pl
+import torch
 import yaml
 from pytorch_lightning.loggers import CSVLogger
 
@@ -15,10 +17,18 @@ except Exception:  # pragma: no cover - wandb is optional at runtime
 
 RUN_ID_PREFIX = "run_"
 RUN_TIMESTAMP_FMT = "%Y%m%d_%H%M%S"
+GENERATOR_CONFIG_MAP = {
+    "DiffusionTS": "diffusion",
+    "TimeFlow": "timeflow",
+    "COTGAN": "cotgan",
+    "FaultDiffusion": "faultdiffusion",
+    "FlowMatch": "flowmatch_pdm",
+    "CropFlow": "flowmatch_pdm",
+}
 
 
 def _results_root() -> Path:
-    return Path("results")
+    return Path(__file__).resolve().parents[2] / "results"
 
 
 def _normalize_run_id(run_id: Optional[str]) -> Optional[str]:
@@ -78,6 +88,13 @@ def resolve_run_dir(track: str, dataset: str, model_name: str, run_id: Optional[
     return _latest_run_dir(model_root)
 
 
+def session_exists(track: str, dataset: str, model_name: str, run_id: Optional[str]) -> bool:
+    normalized_run_id = _normalize_run_id(run_id)
+    if normalized_run_id is None:
+        return False
+    return (resolve_model_root(track, dataset, model_name) / normalized_run_id).exists()
+
+
 def resolve_checkpoint(run_dir: Path, checkpoint_group: str) -> Path:
     checkpoint_dir = run_dir / checkpoint_group
     if not checkpoint_dir.exists():
@@ -87,6 +104,132 @@ def resolve_checkpoint(run_dir: Path, checkpoint_group: str) -> Path:
     if not ckpts:
         raise FileNotFoundError(f"No checkpoint files found in {checkpoint_dir}")
     return ckpts[-1]
+
+
+def resolve_resume_checkpoint(run_dir: Path, checkpoint_group: str) -> Optional[Path]:
+    checkpoint_dir = run_dir / checkpoint_group
+    if not checkpoint_dir.exists():
+        return None
+
+    preferred = checkpoint_dir / "last.ckpt"
+    if preferred.exists():
+        return preferred
+
+    last_candidates = sorted(checkpoint_dir.glob("last*.ckpt"), key=lambda path: path.stat().st_mtime)
+    if last_candidates:
+        return last_candidates[-1]
+
+    ckpt_candidates = sorted(checkpoint_dir.glob("*.ckpt"), key=lambda path: path.stat().st_mtime)
+    if ckpt_candidates:
+        return ckpt_candidates[-1]
+    return None
+
+
+def read_checkpoint_epoch(checkpoint_path: Optional[Path]) -> Optional[int]:
+    if checkpoint_path is None or not checkpoint_path.exists():
+        return None
+
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
+    epoch = checkpoint.get("epoch")
+    if epoch is None:
+        return None
+    return int(epoch)
+
+
+def checkpoint_completed_training(checkpoint_path: Optional[Path], max_epochs: int) -> bool:
+    epoch = read_checkpoint_epoch(checkpoint_path)
+    if epoch is None:
+        return False
+    return (epoch + 1) >= int(max_epochs)
+
+
+def resolve_trainer_runtime(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Resolve Lightning trainer accelerator/devices with a hard single-device cap.
+
+    The project runs small and medium PdM datasets where multi-GPU DDP adds
+    synchronization overhead and can duplicate per-rank filesystem writes.
+    """
+
+    trainer_cfg = config.get("trainer", {})
+    requested_accelerator = str(trainer_cfg.get("accelerator", "auto")).lower()
+
+    if requested_accelerator == "cpu":
+        return {"accelerator": "cpu", "devices": 1}
+
+    if torch.cuda.is_available():
+        cuda_devices = torch.cuda.device_count()
+        if cuda_devices > 1:
+            print(
+                f"[TrainerConfig] Detected {cuda_devices} CUDA devices. "
+                "Forcing single-GPU execution on cuda:0."
+            )
+        return {"accelerator": "gpu", "devices": 1}
+
+    if requested_accelerator in {"gpu", "cuda"}:
+        print("[TrainerConfig] CUDA requested but unavailable. Falling back to CPU.")
+    return {"accelerator": "cpu", "devices": 1}
+
+
+def _base_model_name(model_name: str) -> str:
+    if "_aug_" in model_name:
+        return model_name.split("_aug_", 1)[0]
+    if "_ablation_" in model_name:
+        return model_name.split("_ablation_", 1)[0]
+    return model_name
+
+
+def _build_runtime_config_snapshot(track: str, dataset: str, model_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    trainer_cfg = deepcopy(config.get("trainer", {}))
+    precision_cfg = trainer_cfg.get("precision")
+    if isinstance(precision_cfg, dict):
+        compact_precision = {}
+        if "rul" in precision_cfg:
+            compact_precision["rul"] = deepcopy(precision_cfg["rul"])
+        if "generator" in precision_cfg:
+            compact_precision["generator"] = deepcopy(precision_cfg["generator"])
+        trainer_cfg["precision"] = compact_precision
+
+    snapshot: Dict[str, Any] = {
+        "project_name": config.get("project_name"),
+        "seed": config.get("seed"),
+        "logging": deepcopy(config.get("logging", {})),
+        "trainer": trainer_cfg,
+        "datasets": {},
+        "evaluation": deepcopy(config.get("evaluation", {})),
+    }
+
+    datasets_cfg = config.get("datasets", {})
+    if "minority_rul_ratio" in datasets_cfg:
+        snapshot["datasets"]["minority_rul_ratio"] = deepcopy(datasets_cfg["minority_rul_ratio"])
+    if dataset in datasets_cfg:
+        snapshot["datasets"][dataset] = deepcopy(datasets_cfg[dataset])
+
+    if "experiment" in config:
+        snapshot["experiment"] = deepcopy(config["experiment"])
+
+    base_model = _base_model_name(model_name)
+    if base_model in {"LSTMRegressor", "CNN1DRegressor", "TransformerRegressor", "MambaRegressor"}:
+        classifier_cfg = config.get("classifier", {})
+        snapshot["classifier"] = {}
+        if base_model == "LSTMRegressor" and "rul" in track and "lstm" in classifier_cfg:
+            snapshot["classifier"]["lstm"] = deepcopy(classifier_cfg["lstm"])
+        if base_model == "CNN1DRegressor" and "rul" in track and "cnn1d" in classifier_cfg:
+            snapshot["classifier"]["cnn1d"] = deepcopy(classifier_cfg["cnn1d"])
+        if base_model == "TransformerRegressor" and "rul" in track and "transformer" in classifier_cfg:
+            snapshot["classifier"]["transformer"] = deepcopy(classifier_cfg["transformer"])
+        if base_model == "MambaRegressor" and "rul" in track and "mamba" in classifier_cfg:
+            snapshot["classifier"]["mamba"] = deepcopy(classifier_cfg["mamba"])
+
+        if any(tag in model_name for tag in ("_aug_noise", "_aug_smote")) and "classical" in config:
+            snapshot["classical"] = deepcopy(config["classical"])
+    else:
+        generator_key = GENERATOR_CONFIG_MAP.get(base_model)
+        generative_cfg = config.get("generative", {})
+        if generator_key and generator_key in generative_cfg:
+            snapshot["generative"] = {generator_key: deepcopy(generative_cfg[generator_key])}
+
+    return snapshot
 
 
 class SessionManager:
@@ -127,8 +270,9 @@ class SessionManager:
             path.mkdir(parents=True, exist_ok=existing_ok)
 
         self.config_path = self.run_dir / "run_configs.yaml"
+        self.config = _build_runtime_config_snapshot(track, dataset, model_name, config)
         with self.config_path.open("w", encoding="utf-8") as handle:
-            yaml.safe_dump(config, handle, sort_keys=False)
+            yaml.safe_dump(self.config, handle, sort_keys=False)
 
         self.manifest_path = self.run_dir / "run_manifest.json"
         self._write_manifest(
@@ -181,7 +325,11 @@ class SessionManager:
                 return json.load(handle)
         return {}
 
+    def read_manifest(self) -> Dict[str, Any]:
+        return self._read_manifest()
+
     def _write_manifest(self, payload: Dict[str, Any]) -> None:
+        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
         with self.manifest_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
 
@@ -189,6 +337,13 @@ class SessionManager:
         manifest = self._read_manifest()
         manifest.update(payload)
         self._write_manifest(manifest)
+
+    def write_config(self, config: Dict[str, Any]) -> Path:
+        self.config = _build_runtime_config_snapshot(self.track, self.dataset, self.model_name, config)
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.config_path.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(self.config, handle, sort_keys=False)
+        return self.config_path
 
     def write_json(self, relative_path: str, payload: Dict[str, Any]) -> Path:
         target = self.run_dir / relative_path

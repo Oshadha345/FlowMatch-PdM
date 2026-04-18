@@ -2,13 +2,12 @@
 """FlowMatch-PdM — Reset a pipeline step back to 'pending' for re-execution.
 
 Usage:
-  python scripts/resume_from.py --phase 0 --track engine_rul --dataset N-CMAPSS
-  python scripts/resume_from.py --phase 1 --aug noise --track bearing_fault --dataset CWRU
-  python scripts/resume_from.py --phase 2 --model TimeVAE --track bearing_fault --dataset CWRU --step gen
-  python scripts/resume_from.py --phase 2 --model TimeVAE --track bearing_fault --dataset CWRU --step clf
-  python scripts/resume_from.py --phase 2 --model TimeVAE --track bearing_fault --dataset CWRU --step both
+  python scripts/resume_from.py --phase 0 --track bearing_rul --dataset FEMTO
+  python scripts/resume_from.py --phase 1 --aug noise --track bearing_rul --dataset XJTU-SY
+  python scripts/resume_from.py --phase 3 --model COTGAN --track bearing_rul --dataset FEMTO --step gen
   python scripts/resume_from.py --phase 3 --model FlowMatch --track bearing_rul --dataset FEMTO --step gen
-  python scripts/resume_from.py --phase 4 --ablation no_prior --step gen
+  python scripts/resume_from.py --phase 4 --ablation no_prior --track bearing_rul --dataset FEMTO --step gen
+  python scripts/resume_from.py --phase 4 --ablation no_lap --track bearing_rul --dataset XJTU-SY --step both
   python scripts/resume_from.py --phase final_report
   python scripts/resume_from.py --phase env_check
   python scripts/resume_from.py --phase preflight
@@ -56,11 +55,11 @@ def main():
     )
     parser.add_argument("--phase", required=True,
                         help="Phase to reset: 0, 1, 2, 3, 4, env_check, preflight, final_report")
-    parser.add_argument("--track", default=None, help="Track: engine_rul, bearing_rul, bearing_fault")
-    parser.add_argument("--dataset", default=None, help="Dataset name: CMAPSS, CWRU, etc.")
+    parser.add_argument("--track", default=None, help="Track: bearing_rul")
+    parser.add_argument("--dataset", default=None, help="Dataset name: FEMTO or XJTU-SY")
     parser.add_argument("--model", default=None, help="Generator model name (Phase 2/3)")
     parser.add_argument("--aug", default=None, help="Augmentation type (Phase 1): noise or smote")
-    parser.add_argument("--ablation", default=None, help="Ablation variant (Phase 4): no_prior, no_tccm, no_lap")
+    parser.add_argument("--ablation", default=None, help="Ablation variant (Phase 4): no_prior, no_tccm, or no_lap")
     parser.add_argument("--step", default="both", choices=["gen", "clf", "both"],
                         help="Which step to reset for Phase 2/3/4 (default: both)")
     parser.add_argument("--force", action="store_true",
@@ -202,10 +201,10 @@ def main():
 
     # --- Phase 4 ---
     if phase == "4":
-        if not args.ablation:
-            print("ERROR: --ablation required for Phase 4")
+        if not args.ablation or not args.track or not args.dataset:
+            print("ERROR: --ablation, --track, and --dataset required for Phase 4")
             sys.exit(1)
-        key = f"FlowMatch_{args.ablation}__engine_rul__CMAPSS"
+        key = f"FlowMatch_{args.ablation}__{args.track}__{args.dataset}"
         entry = state.get("phase4", {}).get(key)
         if entry is None:
             print(f"ERROR: Key '{key}' not found in phase4")

@@ -19,14 +19,12 @@ from pathlib import Path
 STATE_FILE = Path(__file__).resolve().parent.parent / "pipeline_state.json"
 
 GENERATORS = [
-    "TimeVAE", "TimeGAN", "COTGAN", "FaultDiffusion",
-    "DiffusionTS", "TimeFlow", "FlowMatch",
+    "FlowMatch", "FaultDiffusion", "COTGAN", "DiffusionTS", "TimeFlow",
 ]
 
-PRIMARY_DATASETS = [
-    ("engine_rul", "CMAPSS"),
-    ("bearing_fault", "CWRU"),
-    ("bearing_fault", "DEMADICS"),
+RUL_DATASETS = [
+    ("bearing_rul", "FEMTO"),
+    ("bearing_rul", "XJTU-SY"),
 ]
 
 
@@ -80,7 +78,7 @@ def print_status(state: dict) -> None:
     # Datasets
     acq = state.get("dataset_acquisition", {})
     ds_parts = []
-    for ds in ["CMAPSS", "CWRU", "DEMADICS", "Paderborn", "N-CMAPSS", "FEMTO", "XJTU-SY"]:
+    for ds in ["FEMTO", "XJTU-SY"]:
         s = acq.get(ds, "pending")
         ds_parts.append(f"{ds} {_status_icon(s)}")
     print(f"  DATASETS:        {' | '.join(ds_parts)}")
@@ -97,13 +95,8 @@ def print_status(state: dict) -> None:
     print("  ├─────────────────────────────────┼──────────┼──────────────┤")
     phase0 = state.get("phase0", {})
     all_p0 = [
-        ("CMAPSS", "engine_rul", "RMSE"),
-        ("N-CMAPSS", "engine_rul", "RMSE"),
         ("FEMTO", "bearing_rul", "RMSE"),
         ("XJTU-SY", "bearing_rul", "RMSE"),
-        ("CWRU", "bearing_fault", "F1"),
-        ("DEMADICS", "bearing_fault", "F1"),
-        ("Paderborn", "bearing_fault", "F1"),
     ]
     for ds, track, metric in all_p0:
         key = f"{track}__{ds}"
@@ -135,41 +128,25 @@ def print_status(state: dict) -> None:
     print("  └──────────────────────────────────┴──────────┴──────────────┘")
     print()
 
-    # Phase 2
-    phase2 = state.get("phase2", {})
-    p2_gen_done = sum(1 for v in phase2.values() if isinstance(v, dict) and v.get("gen_status") == "done")
-    p2_clf_done = sum(1 for v in phase2.values() if isinstance(v, dict) and v.get("clf_status") == "done")
-    p2_total = len(phase2)
-
-    print(f"\033[1m  PHASE 2 — GENERATORS\033[0m  (Gen: {p2_gen_done}/{p2_total} | Clf: {p2_clf_done}/{p2_total})")
-    print("  ┌──────────────────┬──────────┬──────────┬──────────┬──────────┬──────────┐")
-    print("  │ Model            │ Dataset  │ Gen      │ FTSD     │ MMD      │ CLF      │")
-    print("  ├──────────────────┼──────────┼──────────┼──────────┼──────────┼──────────┤")
-
-    for gen in GENERATORS:
-        for track, ds in PRIMARY_DATASETS:
-            key = f"{gen}__{track}__{ds}"
-            entry = phase2.get(key, {})
-            gen_status = entry.get("gen_status", "pending")
-            clf_status = entry.get("clf_status", "pending")
-            ftsd = _fmt(entry.get("ftsd"))
-            mmd = _fmt(entry.get("mmd"))
-            print(f"  │ {gen:<16} │ {ds:<8} │ {_pad(_status_icon(gen_status) + ' ' + gen_status[:4], 8)} │ "
-                  f"{ftsd:<8} │ {mmd:<8} │ {_pad(_status_icon(clf_status) + ' ' + clf_status[:4], 8)} │")
-    print("  └──────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┘")
-    print()
-
     # Phase 3
     phase3 = state.get("phase3", {})
     if phase3:
         p3_done = sum(1 for v in phase3.values() if isinstance(v, dict) and v.get("clf_status") == "done")
-        print(f"\033[1m  PHASE 3 — SECONDARY DATASETS\033[0m  ({p3_done}/{len(phase3)} complete)")
-        for k, v in phase3.items():
-            if not isinstance(v, dict):
-                continue
-            gs = v.get("gen_status", "pending")
-            cs = v.get("clf_status", "pending")
-            print(f"    {k}: gen={_status_icon(gs)} clf={_status_icon(cs)}")
+        print(f"\033[1m  PHASE 3 — GENERATORS\033[0m  ({p3_done}/{len(phase3)} complete)")
+        print("  ┌──────────────────┬──────────┬──────────┬──────────┬──────────┬──────────┐")
+        print("  │ Model            │ Dataset  │ Gen      │ FTSD     │ MMD      │ CLF      │")
+        print("  ├──────────────────┼──────────┼──────────┼──────────┼──────────┼──────────┤")
+        for gen in GENERATORS:
+            for track, ds in RUL_DATASETS:
+                key = f"{gen}__{track}__{ds}"
+                entry = phase3.get(key, {})
+                gen_status = entry.get("gen_status", "pending")
+                clf_status = entry.get("clf_status", "pending")
+                ftsd = _fmt(entry.get("ftsd"))
+                mmd = _fmt(entry.get("mmd"))
+                print(f"  │ {gen:<16} │ {ds:<8} │ {_pad(_status_icon(gen_status) + ' ' + gen_status[:4], 8)} │ "
+                      f"{ftsd:<8} │ {mmd:<8} │ {_pad(_status_icon(clf_status) + ' ' + clf_status[:4], 8)} │")
+        print("  └──────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┘")
         print()
 
     # Top models
@@ -184,7 +161,8 @@ def print_status(state: dict) -> None:
     if phase4:
         p4_done = sum(1 for v in phase4.values() if isinstance(v, dict) and v.get("gen_status") == "done")
         print(f"\033[1m  PHASE 4 — ABLATIONS\033[0m  ({p4_done}/{len(phase4)} complete)")
-        for k, v in phase4.items():
+        for k in sorted(phase4):
+            v = phase4[k]
             if not isinstance(v, dict):
                 continue
             gs = v.get("gen_status", "pending")

@@ -4,6 +4,11 @@
 
 # FlowMatch-PdM
 
+Current repo status:
+- Active execution scope is the hackathon RUL pivot on `FEMTO` and `XJTU-SY`
+- Active generators are `COTGAN`, `FaultDiffusion`, `DiffusionTS`, `TimeFlow`, and `FlowMatch`
+- Active ablations are `FlowMatch --ablation no_tccm`, `FlowMatch --ablation no_prior`, and `FlowMatch --ablation no_lap`
+
 **State-Space Flow Matching with Dynamic Harmonic Priors for Physics-Aware Synthetic Fault Generation in Predictive Maintenance.**
 
 FlowMatch-PdM is a conditional flow matching framework that combines a bidirectional Mamba backbone, physics-informed harmonic priors, a Temporal-Condition Consistency Manifold (TCCM) loss, and Layer-Adaptive Pruning (LAP) to generate high-fidelity synthetic degradation time series for predictive maintenance data augmentation.
@@ -28,50 +33,46 @@ conda env create -f environment.yml
 conda activate flowmatch_pdm
 pip install -r requirements.txt
 
-# 2. Run the full automated pipeline
+# 2. Run the active RUL pivot pipeline
+bash final_execution.sh
+
+# 3. Or launch it inside tmux
 bash launch.sh
 
-# 3. Monitor progress in another terminal
-python scripts/check_results.py --watch
-
-# 4. View results after completion
-cat results/final_report/ranking_summary.md
+# 4. Inspect outputs
+find results/bearing_rul -maxdepth 3 -type d | sort
 ```
 
 ## Results
 
-Results are populated automatically by the orchestrator into `docs/03_result_logger.md` and `results/final_report/`.
+Results for the active hackathon run are written under `results/bearing_rul/FEMTO/` and `results/bearing_rul/XJTU-SY/`.
 
-### Phase 0 Baselines (Pre-computed)
+### Current State
 
-| Dataset | Track | Metric | Score |
-|---------|-------|--------|-------|
-| CMAPSS | Engine RUL | RMSE ↓ | 16.52 |
-| CWRU | Fault Classification | F1 Macro ↑ | 1.000 |
-| DEMADICS | Fault Classification | F1 Macro ↑ | 0.967 |
-| Paderborn | Fault Classification | F1 Macro ↑ | 0.999 |
-
-Full comparison tables (including all 7 generators × 3 primary datasets) are generated after training completes.
+- `results/` has been archived to `archive_backup/`
+- `pipeline_state.json` has been reset to an empty object
+- `final_execution.sh` now assumes a clean start and trains FlowMatch first
 
 ## Project Structure
 
 ```
 FlowMatch-PdM/
-├── orchestrate.py              # Master automation pipeline
-├── launch.sh                   # tmux launcher
+├── orchestrate.py              # Compatibility wrapper for final_execution.sh
+├── final_execution.sh          # Active FEMTO/XJTU-SY RUL execution script
+├── launch.sh                   # tmux launcher for final_execution.sh
 ├── pipeline_state.json         # Resumable state (single source of truth)
 ├── train_classifier.py         # Train baseline / augmented classifiers
 ├── train_generator.py          # Train generative models
 ├── run_evaluation.py           # Re-evaluate existing runs
 ├── configs/
-│   ├── default_config.yaml     # All model hyperparameters
-│   └── sweep_flowmatch_cmapss.yaml  # W&B Bayesian sweep config
+│   ├── default_config.yaml     # Active pivot hyperparameters only
+│   └── sweep_flowmatch_femto.yaml   # Active FEMTO W&B sweep config
 ├── flowmatchPdM/               # FlowMatch-PdM model implementation
 │   ├── flowmatch_pdm.py        # Main LightningModule
 │   └── model/                  # Mamba backbone, harmonic prior, TCCM, LAP
 ├── src/
-│   ├── baselines.py            # 6 baseline generators
-│   ├── classifier.py           # CNN1DClassifier, LSTMRegressor
+│   ├── baselines.py            # Active generator baselines + classical augmenters
+│   ├── classifier.py           # Models; active pivot uses MambaRULRegressor
 │   └── evaluation.py           # FTSD, MMD, discriminative/predictive scores
 ├── scripts/
 │   ├── check_results.py        # Live progress dashboard
@@ -89,15 +90,11 @@ FlowMatch-PdM/
 
 | Dataset | Track | Source | Acquisition |
 |---------|-------|--------|-------------|
-| C-MAPSS | Engine RUL | NASA | Auto-download via `rul-datasets` |
-| N-CMAPSS | Engine RUL | NASA | Auto-download via `rul-datasets` |
 | FEMTO | Bearing RUL | IEEE PHM 2012 | Auto-download via `rul-datasets` |
 | XJTU-SY | Bearing RUL | Xi'an Jiaotong Univ. | Auto-download via `rul-datasets` |
-| CWRU | Bearing Fault | Case Western Reserve | Preprocessed `.npy` files |
-| DEMADICS | Bearing Fault | Lublin Univ. | Preprocessed `.npy` files |
-| Paderborn | Bearing Fault | Paderborn Univ. | Preprocessed `.npy` files |
 
 See [docs/dataset_acquisition.md](docs/dataset_acquisition.md) for detailed instructions.
+The active hackathon plan is documented in [docs/01_experiment_plan.md](docs/01_experiment_plan.md).
 
 ## Hardware Requirements
 

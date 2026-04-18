@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "last_updated": "2026-04-14T16:01:38.087040+00:00",
+  "errors": [],
+  "env_check": "done",
+  "dataset_acquisition": {
+    "FEMTO": "done",
+    "XJTU-SY": "done"
+  },
+  "preflight_notebook": "done",
+  "phase0": {
+    "bearing_rul__FEMTO": {
+      "status": "done",
+      "run_id": "run_20260413_011445",
+      "rmse": 264.59055928452926
+    },
+    "bearing_rul__XJTU-SY": {
+      "status": "done",
+      "run_id": "run_20260413_012536",
+      "rmse": 91.31598106814327
+    }
+  },
+  "phase1": {
+    "noise__bearing_rul__FEMTO": {
+      "status": "pending",
+      "run_id": null
+    },
+    "smote__bearing_rul__FEMTO": {
+      "status": "pending",
+      "run_id": null
+    },
+    "noise__bearing_rul__XJTU-SY": {
+      "status": "pending",
+      "run_id": null
+    },
+    "smote__bearing_rul__XJTU-SY": {
+      "status": "pending",
+      "run_id": null
+    }
+  },
+  "phase2": {},
+  "phase3": {
+    "FaultDiffusion__bearing_rul__FEMTO": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260414_004514",
+      "clf_status": "done",
+      "clf_run_id": "run_20260414_014554",
+      "ftsd": 2.5914902808727747,
+      "mmd": 0.04344677925109863,
+      "discriminative_score": 0.3390804597701149,
+      "predictive_score_mae": 0.3770671486854553,
+      "clf_rmse": 275.93974376211196
+    },
+    "FaultDiffusion__bearing_rul__XJTU-SY": {
+      "gen_status": "done",
+      "gen_run_id": "run_20260414_020313",
+      "clf_status": "done",
+      "clf_run_id": "run_20260414_024023",
+      "ftsd": 14.22573963497389,
+      "mmd": 0.09823048114776611,
+      "discriminative_score": 0.32692307692307687,
+      "predictive_score_mae": 1.2180649042129517,
+      "clf_rmse": 88.33211477146916
+    },
+    "FlowMatch__bearing_rul__FEMTO": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch__bearing_rul__XJTU-SY": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "COTGAN__bearing_rul__FEMTO": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "COTGAN__bearing_rul__XJTU-SY": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "DiffusionTS__bearing_rul__FEMTO": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "DiffusionTS__bearing_rul__XJTU-SY": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "TimeFlow__bearing_rul__FEMTO": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "TimeFlow__bearing_rul__XJTU-SY": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    }
+  },
+  "top_models": [
+    "FlowMatch",
+    "FaultDiffusion",
+    "COTGAN"
+  ],
+  "phase4": {
+    "FlowMatch_no_tccm__bearing_rul__FEMTO": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch_no_prior__bearing_rul__FEMTO": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch_no_lap__bearing_rul__FEMTO": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch_no_tccm__bearing_rul__XJTU-SY": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch_no_prior__bearing_rul__XJTU-SY": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    },
+    "FlowMatch_no_lap__bearing_rul__XJTU-SY": {
+      "gen_status": "pending",
+      "gen_run_id": null,
+      "clf_status": "pending",
+      "clf_run_id": null
+    }
+  },
+  "final_report": "pending"
+}

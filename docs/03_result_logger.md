@@ -117,11 +117,11 @@ Log only successful runs here. This file is the single source of truth for basel
 
 ---
 
-## 🏁 Table 6: Phase 5 - W&B Sweep And Final CMAPSS Run
+## 🏁 Table 6: Phase 5 - W&B Sweep And Final FEMTO FlowMatch Run
 
 | Item | Value | Run ID / Notes |
 | :--- | :--- | :--- |
-| Sweep config path | `configs/sweep_flowmatch_cmapss.yaml` | - |
+| Sweep config path | `configs/sweep_flowmatch_femto.yaml` | - |
 | Sweep winner model | FlowMatch-PdM | - |
 | Sweep winner FTSD | - | - |
 | Sweep winner TSTR MAE | - | - |

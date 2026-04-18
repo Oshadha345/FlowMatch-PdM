@@ -1,4 +1,5 @@
 import argparse
+from copy import deepcopy
 import math
 from pathlib import Path
 
@@ -11,14 +12,17 @@ from torch.utils.data import BatchSampler, ConcatDataset, DataLoader, TensorData
 
 from run_evaluation import evaluate_classifier_run
 from src.baselines import ClassicalAugmenter
-from src.classifier import CNN1DClassifier, LSTMRegressor
-from src.evaluation import TSTR_Evaluation
+from src.classifier import CNN1DRegressor, LSTMRegressor, MambaRULRegressor, TransformerRegressor
 from src.utils.data_helper import get_data_module, get_dataset_config
 from src.utils.logger_utils import (
+    checkpoint_completed_training,
     JSONMetricsTracker,
     SessionManager,
     resolve_classifier_experiment_name,
     resolve_experiment_model_name,
+    resolve_resume_checkpoint,
+    resolve_trainer_runtime,
+    session_exists,
     setup_wandb_logger,
 )
 
@@ -27,11 +31,24 @@ try:
 except Exception:  # pragma: no cover - wandb is optional at runtime
     wandb = None
 
+try:
+    from thop import profile as thop_profile
+except Exception:  # pragma: no cover - thop is optional at runtime
+    thop_profile = None
 
-CLASSIFIER_CHOICES = ["baseline", "LSTMRegressor", "CNN1DClassifier"]
+
+CLASSIFIER_CHOICES = [
+    "baseline",
+    "mamba",
+    "MambaRegressor",
+    "lstm",
+    "LSTMRegressor",
+    "cnn1d",
+    "CNN1DRegressor",
+    "transformer",
+    "TransformerRegressor",
+]
 AUGMENTATION_CHOICES = ["none", "noise", "smote"]
-DEFAULT_TSTR_MIN_RELATIVE_F1 = 0.8
-DEFAULT_TSTR_MIN_RELATIVE_BALANCED_ACC = 0.8
 
 
 class _RealSyntheticBatchSampler(BatchSampler):
@@ -102,38 +119,153 @@ class _RealSyntheticBatchSampler(BatchSampler):
 
 
 def _resolve_classifier_name(track: str, requested_model: str) -> str:
-    default_model = "LSTMRegressor" if "rul" in track else "CNN1DClassifier"
-    model_name = default_model if requested_model == "baseline" else requested_model
+    normalized = str(requested_model).strip().lower()
+    if normalized in {"baseline", "mamba", "mambaregressor"}:
+        model_name = "MambaRegressor"
+    elif normalized in {"lstm", "lstmregressor"}:
+        model_name = "LSTMRegressor"
+    elif normalized in {"cnn1d", "cnn1dregressor"}:
+        model_name = "CNN1DRegressor"
+    elif normalized in {"transformer", "transformerregressor"}:
+        model_name = "TransformerRegressor"
+    else:
+        raise ValueError(f"Unsupported regressor '{requested_model}'. Choose from {CLASSIFIER_CHOICES}.")
 
-    if "rul" in track and model_name != "LSTMRegressor":
-        raise ValueError(f"Track '{track}' requires LSTMRegressor, received '{model_name}'.")
-    if track == "bearing_fault" and model_name != "CNN1DClassifier":
-        raise ValueError(f"Track '{track}' requires CNN1DClassifier, received '{model_name}'.")
+    if "rul" in track and model_name not in {
+        "LSTMRegressor",
+        "CNN1DRegressor",
+        "TransformerRegressor",
+        "MambaRegressor",
+    }:
+        raise ValueError(f"Track '{track}' requires an RUL regressor, received '{model_name}'.")
     return model_name
 
 
-def _build_model(track: str, model_name: str, config: dict, input_dim: int, num_classes: int, target_scale: float = 1.0):
+def _classifier_config_key(model_name: str) -> str:
+    mapping = {
+        "LSTMRegressor": "lstm",
+        "CNN1DRegressor": "cnn1d",
+        "TransformerRegressor": "transformer",
+        "MambaRegressor": "mamba",
+    }
+    if model_name not in mapping:
+        raise ValueError(f"Unsupported classifier model: {model_name}")
+    return mapping[model_name]
+
+
+def _build_model(
+    track: str,
+    model_name: str,
+    config: dict,
+    input_dim: int,
+    num_classes: int,
+    target_scale: float = 1.0,
+    context_channels: int = 0,
+):
+    classifier_cfg = config["classifier"]
+    cfg_key = _classifier_config_key(model_name)
+
     if model_name == "LSTMRegressor":
+        lstm_cfg = classifier_cfg[cfg_key]
         return LSTMRegressor(
             input_dim=input_dim,
-            hidden_dim=config["classifier"]["lstm"]["hidden_dim"],
-            num_layers=config["classifier"]["lstm"]["num_layers"],
-            learning_rate=config["classifier"]["lstm"]["lr"],
+            hidden_dim=lstm_cfg["hidden_dim"],
+            num_layers=lstm_cfg["num_layers"],
+            learning_rate=lstm_cfg["lr"],
             target_scale=target_scale,
         )
-    if model_name == "CNN1DClassifier":
-        return CNN1DClassifier(
-            num_classes=num_classes,
+    if model_name == "CNN1DRegressor":
+        cnn_cfg = classifier_cfg[cfg_key]
+        return CNN1DRegressor(
             input_channels=input_dim,
-            learning_rate=config["classifier"]["cnn1d"]["lr"],
+            learning_rate=cnn_cfg["lr"],
+            target_scale=target_scale,
+            dropout=cnn_cfg.get("dropout", 0.3),
+        )
+    if model_name == "TransformerRegressor":
+        transformer_cfg = classifier_cfg[cfg_key]
+        return TransformerRegressor(
+            input_channels=input_dim,
+            patch_size=transformer_cfg["patch_size"],
+            d_model=transformer_cfg["d_model"],
+            nhead=transformer_cfg["nhead"],
+            num_layers=transformer_cfg["num_layers"],
+            dropout=transformer_cfg.get("dropout", 0.3),
+            learning_rate=transformer_cfg["lr"],
+            target_scale=target_scale,
+        )
+    if model_name == "MambaRegressor":
+        mamba_cfg = classifier_cfg[cfg_key]
+        return MambaRULRegressor(
+            input_channels=input_dim,
+            d_model=mamba_cfg["d_model"],
+            d_state=mamba_cfg["d_state"],
+            d_conv=mamba_cfg["d_conv"],
+            expand=mamba_cfg["expand"],
+            learning_rate=mamba_cfg["lr"],
+            target_scale=target_scale,
+            context_channels=context_channels,
         )
     raise ValueError(f"Unsupported classifier model: {model_name}")
+
+
+def _apply_classifier_overrides(config: dict, model_name: str, args) -> dict:
+    cfg_key = _classifier_config_key(model_name)
+    classifier_cfg = config["classifier"][cfg_key]
+
+    if args.epochs is not None:
+        classifier_cfg["epochs"] = int(args.epochs)
+    if args.lr is not None:
+        classifier_cfg["lr"] = float(args.lr)
+
+    return config
+
+
+def _profile_model(model: pl.LightningModule, sample_x: torch.Tensor) -> dict:
+    profile = {
+        "parameters": int(sum(parameter.numel() for parameter in model.parameters())),
+        "trainable_parameters": int(
+            sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+        ),
+        "macs": None,
+        "flops_estimate": None,
+    }
+
+    if thop_profile is None:
+        profile["profile_error"] = "thop_not_available"
+        return profile
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    profile_model = None
+    try:
+        # thop mutates modules by attaching bookkeeping buffers; profile a clone so
+        # those buffers are not serialized into the training checkpoint.
+        profile_model = deepcopy(model)
+        was_training = profile_model.training
+        profile_model = profile_model.to(device)
+        profile_model.eval()
+        sample = sample_x.unsqueeze(0).float().to(device)
+        macs, _ = thop_profile(profile_model, inputs=(sample,), verbose=False)
+        profile["macs"] = int(macs)
+        profile["flops_estimate"] = int(macs * 2)
+        if was_training:
+            profile_model.train()
+    except Exception as exc:  # pragma: no cover - dependent on optional profiler/runtime
+        profile["profile_error"] = str(exc)
+    finally:
+        if profile_model is not None:
+            profile_model.cpu()
+            del profile_model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    return profile
 
 
 def _resolve_trainer_precision(config: dict, is_rul: bool):
     precision_cfg = config["trainer"].get("precision", "16-mixed")
     if isinstance(precision_cfg, dict):
-        return precision_cfg["rul" if is_rul else "fault"]
+        return precision_cfg.get("rul", 32)
     return 32 if is_rul else precision_cfg
 
 
@@ -156,41 +288,6 @@ def _resolve_aug_ratio(requested_aug_ratio, real_count: int, synthetic_count: in
     if not 0.0 <= aug_ratio < 1.0:
         raise ValueError(f"--aug_ratio must lie in [0, 1), received {requested_aug_ratio}.")
     return aug_ratio
-
-
-def _run_tstr_gate(
-    generator_session: SessionManager,
-    synthetic_x: np.ndarray,
-    synthetic_y: np.ndarray,
-    config: dict,
-) -> dict:
-    real_x_path = Path(generator_session.paths["generator_datas"]) / "real_minority_data.npy"
-    real_y_path = Path(generator_session.paths["generator_datas"]) / "real_minority_targets.npy"
-    if not real_x_path.exists() or not real_y_path.exists():
-        raise FileNotFoundError(
-            "TSTR gate requires the generator evaluation artifacts "
-            f"'{real_x_path.name}' and '{real_y_path.name}'. Re-run generator evaluation first."
-        )
-
-    real_x = np.load(real_x_path).astype(np.float32)
-    real_y = np.load(real_y_path)
-    tstr = TSTR_Evaluation(
-        save_dir=str(generator_session.paths["evaluation_results"]),
-        batch_size=config.get("evaluation", {}).get("batch_size", 128),
-        epochs=config.get("evaluation", {}).get("tstr_epochs", 20),
-        min_relative_f1=config.get("evaluation", {}).get("tstr_min_relative_f1", DEFAULT_TSTR_MIN_RELATIVE_F1),
-        min_relative_balanced_accuracy=config.get("evaluation", {}).get(
-            "tstr_min_relative_balanced_accuracy",
-            DEFAULT_TSTR_MIN_RELATIVE_BALANCED_ACC,
-        ),
-    )
-    return tstr.run(
-        synthetic_data=synthetic_x,
-        synthetic_targets=synthetic_y,
-        real_data=real_x,
-        real_targets=real_y,
-        filename_prefix="tstr_gate",
-    )
 
 
 def _load_generator_augmented_dataset(
@@ -227,13 +324,6 @@ def _load_generator_augmented_dataset(
     resolved_aug_ratio = _resolve_aug_ratio(requested_aug_ratio, len(dm.train_ds), len(synthetic_ds))
 
     tstr_metrics = None
-    if track == "bearing_fault":
-        tstr_metrics = _run_tstr_gate(generator_session, synthetic_x, synthetic_y, config)
-        if not bool(tstr_metrics.get("gate_passed", False)):
-            raise RuntimeError(
-                "TSTR gate rejected synthetic augmentation "
-                f"for {dataset}/{gen_model}. Metrics: {tstr_metrics}"
-            )
 
     mixed_ds = ConcatDataset([dm.train_ds, synthetic_ds])
     batch_sampler = _RealSyntheticBatchSampler(
@@ -286,19 +376,26 @@ def _build_training_dataset(dm, args, config):
     y_np = y_train.numpy()
 
     if args.aug == "smote":
-        if "rul" in args.track:
-            raise ValueError("SMOTE augmentation is only valid for classification tracks.")
-        x_aug, y_aug = ClassicalAugmenter.apply_smote(
-            x_np,
-            y_np,
-            k_neighbors=config.get("classical", {}).get("smote", {}).get("k_neighbors", 5),
+        k_neighbors = config.get("classical", {}).get("smote", {}).get("k_neighbors", 5)
+        minority_ds = dm.get_minority_dataset(rul_threshold_ratio=config["datasets"]["minority_rul_ratio"])
+        minority_x, minority_y = _collect_dataset_tensors(minority_ds)
+        x_aug, y_aug = ClassicalAugmenter.apply_smote_regression(
+            minority_x.numpy(),
+            minority_y.numpy(),
+            k_neighbors=k_neighbors,
+            n_samples=len(minority_ds),
         )
+        x_mixed = np.concatenate([x_np, x_aug], axis=0)
+        y_mixed = np.concatenate([y_np, y_aug.reshape(-1)], axis=0)
         dataset = TensorDataset(
-            torch.tensor(x_aug, dtype=torch.float32),
-            torch.tensor(y_aug, dtype=torch.long),
+            torch.tensor(x_mixed, dtype=torch.float32),
+            torch.tensor(y_mixed, dtype=torch.float32),
         )
         return dataset, {
             "mode": "smote",
+            "variant": "regression_minority_interpolation",
+            "k_neighbors": int(k_neighbors),
+            "minority_source_count": int(len(minority_ds)),
             "real_count": int(len(dm.train_ds)),
             "augmented_count": int(len(dataset)),
         }, None
@@ -347,28 +444,58 @@ def _build_train_loader(train_ds, batch_size: int, batch_sampler):
 
 def main():
     parser = argparse.ArgumentParser(description="Train baseline or augmented classifiers/regressors.")
-    parser.add_argument("--track", type=str, required=True, help="engine_rul, bearing_rul, or bearing_fault")
-    parser.add_argument("--dataset", type=str, required=True, help="CMAPSS, FEMTO, CWRU, etc.")
-    parser.add_argument("--model", type=str, default="baseline", choices=CLASSIFIER_CHOICES)
-    parser.add_argument("--run_id", type=str, default=None, help="Optional output run identifier for the classifier run.")
+    parser.add_argument("--track", type=str, required=True, help="Active pivot track: bearing_rul")
+    parser.add_argument("--dataset", type=str, required=True, help="Active pivot datasets: FEMTO or XJTU-SY")
+    parser.add_argument("--model", "--eval_model", dest="model", type=str, default="baseline", choices=CLASSIFIER_CHOICES)
+    parser.add_argument("--run_id", type=str, default=None, help="Run identifier. Reuses and resumes the session if it already exists.")
     parser.add_argument("--aug", type=str, default="none", choices=AUGMENTATION_CHOICES, help="Classical augmentation mode.")
     parser.add_argument("--gen_model", type=str, default=None, help="Generator model name for synthetic augmentation.")
     parser.add_argument("--source_run_id", type=str, default=None, help="Generator run identifier for synthetic augmentation.")
     parser.add_argument("--gen_ablation", type=str, default="none", choices=["none", "no_prior", "no_tccm", "no_lap"], help="Generator ablation variant for synthetic augmentation.")
     parser.add_argument("--aug_ratio", type=float, default=None, help="Target synthetic batch fraction for generator augmentation, e.g. 0.2.")
+    parser.add_argument("--epochs", type=int, default=None, help="Override classifier max epochs.")
+    parser.add_argument("--lr", type=float, default=None, help="Override classifier learning rate.")
     parser.add_argument("--use_wandb", action="store_true", help="Enable W&B logging for this run.")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml")
     args = parser.parse_args()
 
-    with Path(args.config).open("r", encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
+    model_name = _resolve_classifier_name(args.track, args.model)
+    session_model_name = resolve_classifier_experiment_name(
+        model_name,
+        aug=args.aug,
+        gen_model=args.gen_model,
+        gen_run_id=args.source_run_id,
+        gen_ablation=args.gen_ablation,
+    )
+    resuming_existing_session = bool(args.run_id) and session_exists(
+        args.track,
+        args.dataset,
+        session_model_name,
+        args.run_id,
+    )
+
+    if resuming_existing_session:
+        session = SessionManager.from_existing(
+            track=args.track,
+            dataset=args.dataset,
+            model_name=session_model_name,
+            run_id=args.run_id,
+        )
+        config = deepcopy(session.config)
+        print(f"[Classifier] Reusing existing session: {session.run_dir}")
+    else:
+        with Path(args.config).open("r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle)
+        session = None
+
+    config = _apply_classifier_overrides(config, model_name, args)
+
     if args.use_wandb:
         config.setdefault("logging", {})["use_wandb"] = True
 
     pl.seed_everything(config["seed"], workers=True)
 
     dataset_cfg = get_dataset_config(config, args.dataset)
-    model_name = _resolve_classifier_name(args.track, args.model)
     is_rul = "rul" in args.track
     batch_size = int(dataset_cfg["batch_size"])
 
@@ -389,44 +516,79 @@ def main():
     input_dim = int(sample_x.shape[-1])
     num_classes = int(getattr(dm, "num_classes", dataset_cfg.get("num_classes", 1)))
     target_scale = float(getattr(dm, "target_scale", 1.0))
-    model = _build_model(args.track, model_name, config, input_dim, num_classes, target_scale=target_scale)
-
-    session_model_name = resolve_classifier_experiment_name(
+    context_channels = 0
+    if dataset_cfg.get("append_condition_features", False):
+        context_channels = len(dataset_cfg.get("conditions", []))
+    model = _build_model(
+        args.track,
         model_name,
-        aug=args.aug,
-        gen_model=args.gen_model,
-        gen_run_id=args.source_run_id,
-        gen_ablation=args.gen_ablation,
+        config,
+        input_dim,
+        num_classes,
+        target_scale=target_scale,
+        context_channels=context_channels,
     )
-    session = SessionManager(
-        track=args.track,
-        dataset=args.dataset,
-        model_name=session_model_name,
-        config=config,
-        run_id=args.run_id,
-    )
+
+    if session is None:
+        session = SessionManager(
+            track=args.track,
+            dataset=args.dataset,
+            model_name=session_model_name,
+            config=config,
+            run_id=args.run_id,
+        )
+    else:
+        session.write_config(config)
     paths = session.get_paths()
+
+    model_profile = _profile_model(model, sample_x)
+    session.write_json("model_profile.json", model_profile)
+    macs_str = "unavailable" if model_profile["macs"] is None else f"{model_profile['macs']:,}"
+    flops_str = (
+        "unavailable"
+        if model_profile["flops_estimate"] is None
+        else f"{model_profile['flops_estimate']:,}"
+    )
+    print(
+        f"[Classifier] Profile for {model_name}: "
+        f"params={model_profile['parameters']:,}, "
+        f"trainable={model_profile['trainable_parameters']:,}, "
+        f"macs={macs_str}, flops={flops_str}"
+    )
+    if "profile_error" in model_profile:
+        print(f"[Classifier] Model profiling note: {model_profile['profile_error']}")
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=paths["best_model_classifier"],
         filename=f"{model_name}-best",
-        monitor="val_loss",
+        monitor="val_rmse",
         mode="min",
         save_top_k=1,
         save_last=True,
     )
-    early_stop = EarlyStopping(monitor="val_loss", patience=config["trainer"]["patience"], mode="min")
+    early_stop = EarlyStopping(
+        monitor="val_rmse",
+        patience=int(config["trainer"].get("classifier_patience", config["trainer"]["patience"])),
+        min_delta=float(config["trainer"].get("classifier_min_delta", 0.5)),
+        stopping_threshold=dataset_cfg.get("classifier_target_rmse"),
+        mode="min",
+        check_finite=True,
+    )
     metrics_filename = "phase0_metrics.json" if augmentation_summary["mode"] == "none" else "phase3_metrics.json"
-    metrics_tracker = JSONMetricsTracker(output_path=str(Path(paths["evaluation_results"]) / metrics_filename))
+    phase_metrics_path = Path(paths["evaluation_results"]) / metrics_filename
+    metrics_tracker = JSONMetricsTracker(output_path=str(phase_metrics_path))
     phase_label = "Phase0" if augmentation_summary["mode"] == "none" else "PhaseAug"
     loggers = setup_wandb_logger(f"{phase_label}_{args.dataset}_{session_model_name}", config, save_dir=paths["logs"])
 
-    epochs = config["classifier"]["lstm"]["epochs"] if is_rul else config["classifier"]["cnn1d"]["epochs"]
+    epochs = int(config["classifier"][_classifier_config_key(model_name)]["epochs"])
+    trainer_runtime = resolve_trainer_runtime(config)
     trainer = pl.Trainer(
         max_epochs=epochs,
-        accelerator=config["trainer"]["accelerator"],
-        devices=config["trainer"]["devices"],
+        accelerator=trainer_runtime["accelerator"],
+        devices=trainer_runtime["devices"],
         precision=_resolve_trainer_precision(config, is_rul),
+        gradient_clip_val=float(config["trainer"].get("gradient_clip_val", 1.0)),
+        gradient_clip_algorithm=config["trainer"].get("gradient_clip_algorithm", "norm"),
         logger=loggers,
         callbacks=[early_stop, checkpoint_callback, metrics_tracker],
         log_every_n_steps=10,
@@ -434,21 +596,53 @@ def main():
 
     print(f"[Classifier] Training {model_name} on {args.dataset} with augmentation mode '{augmentation_summary['mode']}'")
     print(f"[Classifier] Outputs: {paths['root']}")
-    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=dm.val_dataloader())
-    dm.setup(stage="test")
-    trainer.test(model=model, dataloaders=dm.test_dataloader(), ckpt_path="best")
+    resume_checkpoint = resolve_resume_checkpoint(session.run_dir, "best_model_classifier")
+    resume_ckpt_path = None
+    skip_training = False
+    manifest = session.read_manifest()
+    classifier_phase = "phase_0" if augmentation_summary["mode"] == "none" else "phase_augmented_classifier"
+    completed_run_artifacts_exist = phase_metrics_path.exists() or manifest.get("phase") == classifier_phase
+    if resume_checkpoint is not None:
+        if checkpoint_completed_training(resume_checkpoint, epochs) or completed_run_artifacts_exist:
+            skip_training = True
+            print("[Classifier] Existing session already contains completed training artifacts. Skipping fit.")
+        else:
+            resume_ckpt_path = str(resume_checkpoint)
+            print(f"[Classifier] Resuming fit from checkpoint: {resume_checkpoint}")
 
-    best_model_path = checkpoint_callback.best_model_path
+    if not skip_training:
+        trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=dm.val_dataloader(), ckpt_path=resume_ckpt_path)
+    dm.setup(stage="test")
+    manifest = session.read_manifest()
+    best_model_path = checkpoint_callback.best_model_path or checkpoint_callback.last_model_path or manifest.get("best_model_path")
+    if not best_model_path:
+        resolved_checkpoint = resolve_resume_checkpoint(session.run_dir, "best_model_classifier")
+        best_model_path = str(resolved_checkpoint) if resolved_checkpoint is not None else ""
+    else:
+        best_model_path = Path(best_model_path)
+        if not best_model_path.is_absolute():
+            best_model_path = session.run_dir / best_model_path
+        best_model_path = str(best_model_path)
+
+    test_ckpt_path = "best" if not skip_training else best_model_path
+    skip_test = skip_training and phase_metrics_path.exists()
+    if skip_test:
+        print(f"[Classifier] Existing session already contains test metrics at {phase_metrics_path}. Skipping test.")
+    else:
+        trainer.test(model=model, dataloaders=dm.test_dataloader(), ckpt_path=test_ckpt_path)
+
     if augmentation_summary["mode"] != "none":
         session.write_json("augmentation_summary.json", augmentation_summary)
     session.update_manifest(
         {
-            "phase": "phase_0" if augmentation_summary["mode"] == "none" else "phase_augmented_classifier",
+            "phase": classifier_phase,
             "best_model_path": best_model_path,
             "classifier_model": model_name,
             "input_dim": input_dim,
             "window_size": dataset_cfg["window_size"],
             "augmentation": augmentation_summary,
+            "resumed_existing_session": resuming_existing_session,
+            "training_skipped": skip_training,
         }
     )
     evaluation_metrics, _ = evaluate_classifier_run(

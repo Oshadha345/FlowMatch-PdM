@@ -1,300 +1,275 @@
-# 🚀 FlowMatch-PdM: Master Experiment Plan
+# FlowMatch-PdM Hackathon Pivot Plan
 
-This is the exact execution ledger for the current repo. The workflow is now:
+## Scope
 
-- `train_classifier.py` trains and auto-evaluates baseline or augmented classifiers
-- `train_generator.py` trains and auto-evaluates generators
-- `run_evaluation.py` re-evaluates existing runs on demand with `--eval_mode classifier|generator`
+The active hackathon scope is now restricted to:
 
-Every checkbox below is meant to map to a real run folder under `results/<track>/<dataset>/<model>/run_<timestamp>/`.
+- `track = bearing_rul`
+- `datasets = FEMTO, XJTU-SY`
+- `downstream regressor = MambaRULRegressor`
+- `classical baselines = noise, smote`
+- `generator baselines = COTGAN, FaultDiffusion, DiffusionTS, TimeFlow, FlowMatch`
+- `FlowMatch ablations = no_tccm, no_prior, no_lap`
 
----
+Legacy classification and engine-RUL tracks remain in the repository for traceability, but they are out of scope for the final submission.
 
-## Preflight
+## Reset State
 
-- [x] `cd /home/buddhiw/flowmatch/FlowMatch-PdM`
-- [x] `conda activate flowmatch_pdm`
-- [x] `chmod +x run_all.sh`
-- [x] `python -m jupyter nbconvert --to notebook --execute notebooks/01_dataset_analysis.ipynb --output 01_dataset_analysis.executed.ipynb --output-dir notebooks --ExecutePreprocessor.timeout=0 --ExecutePreprocessor.kernel_name=python3`
-- [x] Confirm the executed notebook ends with `Supported loader readiness: GO`
-- [x] Confirm the executed notebook ends with `Full requested roster readiness: GO`
+- `results/` has been archived for a clean restart
+- `pipeline_state.json` has been reset to an empty object
+- the new execution plan assumes no preserved runs
 
----
+## Config Guardrails
 
-## Phase 0: Baseline Classifiers
+- Generator batch size is now enforced per dataset through `datasets.<DATASET>.generator_batch_size`
+- `FEMTO.generator_batch_size = 32`
+- `XJTU-SY.generator_batch_size = 32`
+- Classifier batch size remains at the dataset value `64`
+- XJTU-SY window size remains `2048`
 
-**Goal:** pure downstream baselines with automatic classifier evaluation.
+The XJTU-SY window length was not changed because the completed `FaultDiffusion` run in the ledger already used the current dataset config. Only generator batch size was standardized for the new pivot runs.
 
-### Engine RUL
+## Classical Augmentation
 
-- [x] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline`
-- [ ] `python train_classifier.py --track engine_rul --dataset N-CMAPSS --model baseline`
+The RUL pipeline now supports two fast classical augmenters:
 
-### Bearing RUL
+- `noise`
+- `smote`
 
-- [ ] `python train_classifier.py --track bearing_rul --dataset FEMTO --model baseline`
-- [ ] `python train_classifier.py --track bearing_rul --dataset XJTU-SY --model baseline`
+For RUL tracks, `smote` is implemented as low-RUL minority-window interpolation rather than class-balancing SMOTE. This keeps the CLI unchanged while making the augmentation valid for continuous targets.
 
-### Fault Classification
+## Execution Order
 
-- [x] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline`
-- [x] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline`
-- [x] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline`
+The runner now prioritizes all FlowMatch work first so the core project results land before the traditional augmentations and the heavier generator baselines.
 
-### Phase 0 Checks
+## GPU Split
 
-- [ ] Every baseline run wrote `best_model_classifier/*.ckpt`
-- [ ] Every baseline run wrote `evaluation_results/phase0_metrics.json`
-- [ ] Every baseline run wrote `evaluation_results/classifier_metrics.json`
-- [ ] Every baseline run wrote either `evaluation_results/classifier_confusion_matrix.png` or `evaluation_results/classifier_regression_diagnostics.png`
+The current operating plan is:
 
----
+- `GPU 1`: launch all `FlowMatch` work manually first
+- `GPU 0`: use the scripted queue for the remaining non-FlowMatch work
 
-## Phase 1: Classical Augmentation Baselines
-
-**Goal:** classical augmentation with the same classifier training entrypoint.
-
-### 1A. Noise / Jittering
-
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --aug noise`
-- [ ] `python train_classifier.py --track engine_rul --dataset N-CMAPSS --model baseline --aug noise`
-- [ ] `python train_classifier.py --track bearing_rul --dataset FEMTO --model baseline --aug noise`
-- [ ] `python train_classifier.py --track bearing_rul --dataset XJTU-SY --model baseline --aug noise`
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --aug noise`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --aug noise`
-- [ ] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline --aug noise`
-
-### 1B. SMOTE
-
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --aug smote`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --aug smote`
-- [ ] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline --aug smote`
-
-### Phase 1 Checks
-
-- [ ] Every augmented classifier run wrote `augmentation_summary.json`
-- [ ] Every augmented classifier run wrote `evaluation_results/phase3_metrics.json`
-- [ ] Every augmented classifier run wrote `evaluation_results/classifier_metrics.json`
-
----
-
-## Phase 2: Generative Proving Ground
-
-**Goal:** train every generator on the three primary datasets. Generator training now auto-runs synthetic evaluation and writes FTSD, MMD, discriminative score, and TSTR artifacts before the augmented classifier step.
-
-Primary datasets:
-- `CMAPSS`
-- `CWRU`
-- `DEMADICS`
-
-### `RUN_ID` Resolver
-
-Use this exact command after each generator training run:
+Use separate run tags so the manual FlowMatch lane and the background queue do not collide:
 
 ```bash
-RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('TRACK', 'DATASET', 'MODEL_FOLDER').name)")"
-echo "$RUN_ID"
+export CONFIG_PATH=configs/default_config.yaml
+export FLOWMATCH_TAG=pivot_rul_gpu1_flowmatch_20260414
+export BG_TAG=pivot_rul_gpu0_background_20260414
 ```
 
-For non-ablation runs, `MODEL_FOLDER` is the same as the CLI `--model`.
-For FlowMatch ablations, `MODEL_FOLDER` is `FlowMatch_ablation_<ablation_name>`.
+### Step 1
 
-### 2A. TimeVAE
+Train the primary `FlowMatch` generators on:
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model TimeVAE`
-- [ ] `CMAPSS_TIMEVAE_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'TimeVAE').name)")"; echo "$CMAPSS_TIMEVAE_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model TimeVAE --source_run_id "$CMAPSS_TIMEVAE_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset CWRU --model TimeVAE`
-- [ ] `CWRU_TIMEVAE_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'CWRU', 'TimeVAE').name)")"; echo "$CWRU_TIMEVAE_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --gen_model TimeVAE --source_run_id "$CWRU_TIMEVAE_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset DEMADICS --model TimeVAE`
-- [ ] `DEMADICS_TIMEVAE_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'DEMADICS', 'TimeVAE').name)")"; echo "$DEMADICS_TIMEVAE_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --gen_model TimeVAE --source_run_id "$DEMADICS_TIMEVAE_RUN_ID"`
+- `bearing_rul / FEMTO`
+- `bearing_rul / XJTU-SY`
 
-### 2B. TimeGAN
+Manual commands for `GPU 1`:
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model TimeGAN`
-- [ ] `CMAPSS_TIMEGAN_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'TimeGAN').name)")"; echo "$CMAPSS_TIMEGAN_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model TimeGAN --source_run_id "$CMAPSS_TIMEGAN_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset CWRU --model TimeGAN`
-- [ ] `CWRU_TIMEGAN_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'CWRU', 'TimeGAN').name)")"; echo "$CWRU_TIMEGAN_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --gen_model TimeGAN --source_run_id "$CWRU_TIMEGAN_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset DEMADICS --model TimeGAN`
-- [ ] `DEMADICS_TIMEGAN_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'DEMADICS', 'TimeGAN').name)")"; echo "$DEMADICS_TIMEGAN_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --gen_model TimeGAN --source_run_id "$DEMADICS_TIMEGAN_RUN_ID"`
+```bash
+#####################################
+# Donnnnnnnneeeeee
+CUDA_VISIBLE_DEVICES=1 python3 train_generator.py \
+  --track bearing_rul \
+  --dataset FEMTO \
+  --model FlowMatch \
+  --run_id "${FLOWMATCH_TAG}_femto_flowmatch" \
+  --config "$CONFIG_PATH"
+####################################
 
-### 2C. COTGAN
+################################Doneeeeee
+CUDA_VISIBLE_DEVICES=1 python3 train_generator.py \
+  --track bearing_rul \
+  --dataset XJTU-SY \
+  --model FlowMatch \
+  --run_id "${FLOWMATCH_TAG}_xjtu_sy_flowmatch" \
+  --config "$CONFIG_PATH"
+################################
+```
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model COTGAN`
-- [ ] `CMAPSS_COTGAN_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'COTGAN').name)")"; echo "$CMAPSS_COTGAN_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model COTGAN --source_run_id "$CMAPSS_COTGAN_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset CWRU --model COTGAN`
-- [ ] `CWRU_COTGAN_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'CWRU', 'COTGAN').name)")"; echo "$CWRU_COTGAN_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --gen_model COTGAN --source_run_id "$CWRU_COTGAN_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset DEMADICS --model COTGAN`
-- [ ] `DEMADICS_COTGAN_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'DEMADICS', 'COTGAN').name)")"; echo "$DEMADICS_COTGAN_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --gen_model COTGAN --source_run_id "$DEMADICS_COTGAN_RUN_ID"`
 
-### 2D. FaultDiffusion
+### Step 2
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model FaultDiffusion`
-- [ ] `CMAPSS_FAULTDIFFUSION_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'FaultDiffusion').name)")"; echo "$CMAPSS_FAULTDIFFUSION_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model FaultDiffusion --source_run_id "$CMAPSS_FAULTDIFFUSION_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset CWRU --model FaultDiffusion`
-- [ ] `CWRU_FAULTDIFFUSION_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'CWRU', 'FaultDiffusion').name)")"; echo "$CWRU_FAULTDIFFUSION_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --gen_model FaultDiffusion --source_run_id "$CWRU_FAULTDIFFUSION_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset DEMADICS --model FaultDiffusion`
-- [ ] `DEMADICS_FAULTDIFFUSION_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'DEMADICS', 'FaultDiffusion').name)")"; echo "$DEMADICS_FAULTDIFFUSION_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --gen_model FaultDiffusion --source_run_id "$DEMADICS_FAULTDIFFUSION_RUN_ID"`
+Train the downstream Mamba regressors for those two primary `FlowMatch` runs.
 
-### 2E. DiffusionTS
+RUL evaluation writes the following metrics to `evaluation_results/classifier_metrics.json`:
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model DiffusionTS`
-- [ ] `CMAPSS_DIFFUSIONTS_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'DiffusionTS').name)")"; echo "$CMAPSS_DIFFUSIONTS_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model DiffusionTS --source_run_id "$CMAPSS_DIFFUSIONTS_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset CWRU --model DiffusionTS`
-- [ ] `CWRU_DIFFUSIONTS_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'CWRU', 'DiffusionTS').name)")"; echo "$CWRU_DIFFUSIONTS_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --gen_model DiffusionTS --source_run_id "$CWRU_DIFFUSIONTS_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset DEMADICS --model DiffusionTS`
-- [ ] `DEMADICS_DIFFUSIONTS_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'DEMADICS', 'DiffusionTS').name)")"; echo "$DEMADICS_DIFFUSIONTS_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --gen_model DiffusionTS --source_run_id "$DEMADICS_DIFFUSIONTS_RUN_ID"`
+- `rmse`
+- `mae`
+- `r2`
 
-### 2F. TimeFlow
+Manual commands for `GPU 1`:
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model TimeFlow`
-- [ ] `CMAPSS_TIMEFLOW_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'TimeFlow').name)")"; echo "$CMAPSS_TIMEFLOW_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model TimeFlow --source_run_id "$CMAPSS_TIMEFLOW_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset CWRU --model TimeFlow`
-- [ ] `CWRU_TIMEFLOW_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'CWRU', 'TimeFlow').name)")"; echo "$CWRU_TIMEFLOW_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --gen_model TimeFlow --source_run_id "$CWRU_TIMEFLOW_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset DEMADICS --model TimeFlow`
-- [ ] `DEMADICS_TIMEFLOW_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'DEMADICS', 'TimeFlow').name)")"; echo "$DEMADICS_TIMEFLOW_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --gen_model TimeFlow --source_run_id "$DEMADICS_TIMEFLOW_RUN_ID"`
 
-### 2G. FlowMatch-PdM
+####################DONEEEEE
+```bash
+CUDA_VISIBLE_DEVICES=1 python3 train_classifier_aug.py \
+  --track bearing_rul \
+  --dataset FEMTO \
+  --eval_model mamba \
+  --gen_model FlowMatch \
+  --source_run_id "${FLOWMATCH_TAG}_femto_flowmatch" \
+  --output_run_id "${FLOWMATCH_TAG}_femto_flowmatch_mamba_tstr" \
+  --config "$CONFIG_PATH"
+##########################
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model FlowMatch`
-- [ ] `CMAPSS_FLOWMATCH_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'FlowMatch').name)")"; echo "$CMAPSS_FLOWMATCH_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model FlowMatch --source_run_id "$CMAPSS_FLOWMATCH_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset CWRU --model FlowMatch`
-- [ ] `CWRU_FLOWMATCH_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'CWRU', 'FlowMatch').name)")"; echo "$CWRU_FLOWMATCH_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset CWRU --model baseline --gen_model FlowMatch --source_run_id "$CWRU_FLOWMATCH_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset DEMADICS --model FlowMatch`
-- [ ] `DEMADICS_FLOWMATCH_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'DEMADICS', 'FlowMatch').name)")"; echo "$DEMADICS_FLOWMATCH_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset DEMADICS --model baseline --gen_model FlowMatch --source_run_id "$DEMADICS_FLOWMATCH_RUN_ID"`
 
-### Phase 2 Checks
+###############Done
+CUDA_VISIBLE_DEVICES=1 python3 train_classifier_aug.py \
+  --track bearing_rul \
+  --dataset XJTU-SY \
+  --eval_model mamba \
+  --gen_model FlowMatch \
+  --source_run_id "${FLOWMATCH_TAG}_xjtu_sy_flowmatch" \
+  --output_run_id "${FLOWMATCH_TAG}_xjtu_sy_flowmatch_mamba_tstr" \
+  --config "$CONFIG_PATH"
+#################################
+```
 
-- [ ] Every generator run wrote `best_models_generator/*.ckpt`
-- [ ] Every generator run wrote `generator_datas/synthetic_data.npy`
-- [ ] Every generator run wrote `generator_datas/synthetic_targets.npy`
-- [ ] Every generator run wrote `evaluation_results/metrics.txt`
-- [ ] Every generator run wrote `evaluation_results/metrics.json`
-- [ ] Every generator run wrote `evaluation_results/projection_pca_tsne.png`
-- [ ] Every generator run wrote `evaluation_results/marginal_kde.png`
-- [ ] Every augmented classifier run wrote `evaluation_results/classifier_metrics.json`
+### Step 3
 
----
+Run the FlowMatch ablations on FEMTO:
 
-## Phase 3: Secondary-Dataset Generalization
+- `--ablation no_tccm`
+- `--ablation no_prior`
+- `--ablation no_lap`
 
-Freeze the Top 1, Top 2, and Top 3 models in `docs/03_result_logger.md`, then export them:
+Then run the downstream TSTR regressors for each ablation run.
 
-- [ ] `read -r -p "Enter Top 1 model: " TOP_1; export TOP_1`
-- [ ] `read -r -p "Enter Top 2 model: " TOP_2; export TOP_2`
-- [ ] `read -r -p "Enter Top 3 model: " TOP_3; export TOP_3`
+Manual commands for `GPU 1`:
 
-### Rank 1
+```bash
+#######DONEEEEE########
+CUDA_VISIBLE_DEVICES=1 python3 train_generator.py \
+  --track bearing_rul \
+  --dataset FEMTO \
+  --model FlowMatch \
+  --ablation no_tccm \
+  --run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_tccm" \
+  --config "$CONFIG_PATH"
+#########################
 
-- [ ] `python train_generator.py --track engine_rul --dataset N-CMAPSS --model "$TOP_1"`
-- [ ] `TOP1_NCMAPSS_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'N-CMAPSS', os.environ['TOP_1']).name)")"; echo "$TOP1_NCMAPSS_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset N-CMAPSS --model baseline --gen_model "$TOP_1" --source_run_id "$TOP1_NCMAPSS_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_rul --dataset FEMTO --model "$TOP_1"`
-- [ ] `TOP1_FEMTO_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_rul', 'FEMTO', os.environ['TOP_1']).name)")"; echo "$TOP1_FEMTO_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_rul --dataset FEMTO --model baseline --gen_model "$TOP_1" --source_run_id "$TOP1_FEMTO_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_rul --dataset XJTU-SY --model "$TOP_1"`
-- [ ] `TOP1_XJTU_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_rul', 'XJTU-SY', os.environ['TOP_1']).name)")"; echo "$TOP1_XJTU_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_rul --dataset XJTU-SY --model baseline --gen_model "$TOP_1" --source_run_id "$TOP1_XJTU_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset Paderborn --model "$TOP_1"`
-- [ ] `TOP1_PADERBORN_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'Paderborn', os.environ['TOP_1']).name)")"; echo "$TOP1_PADERBORN_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline --gen_model "$TOP_1" --source_run_id "$TOP1_PADERBORN_RUN_ID"`
+#######DONEEEEE########
+CUDA_VISIBLE_DEVICES=1 python3 train_generator.py \
+  --track bearing_rul \
+  --dataset XJTU-SY \
+  --model FlowMatch \
+  --ablation no_tccm \
+  --run_id "${FLOWMATCH_TAG}_xjtu_sy_flowmatch_no_tccm" \
+  --config "$CONFIG_PATH"
+#########################
 
-### Rank 2
 
-- [ ] `python train_generator.py --track engine_rul --dataset N-CMAPSS --model "$TOP_2"`
-- [ ] `TOP2_NCMAPSS_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'N-CMAPSS', os.environ['TOP_2']).name)")"; echo "$TOP2_NCMAPSS_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset N-CMAPSS --model baseline --gen_model "$TOP_2" --source_run_id "$TOP2_NCMAPSS_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_rul --dataset FEMTO --model "$TOP_2"`
-- [ ] `TOP2_FEMTO_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_rul', 'FEMTO', os.environ['TOP_2']).name)")"; echo "$TOP2_FEMTO_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_rul --dataset FEMTO --model baseline --gen_model "$TOP_2" --source_run_id "$TOP2_FEMTO_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_rul --dataset XJTU-SY --model "$TOP_2"`
-- [ ] `TOP2_XJTU_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_rul', 'XJTU-SY', os.environ['TOP_2']).name)")"; echo "$TOP2_XJTU_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_rul --dataset XJTU-SY --model baseline --gen_model "$TOP_2" --source_run_id "$TOP2_XJTU_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset Paderborn --model "$TOP_2"`
-- [ ] `TOP2_PADERBORN_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'Paderborn', os.environ['TOP_2']).name)")"; echo "$TOP2_PADERBORN_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline --gen_model "$TOP_2" --source_run_id "$TOP2_PADERBORN_RUN_ID"`
+CUDA_VISIBLE_DEVICES=1 python3 train_classifier_aug.py \
+  --track bearing_rul \
+  --dataset FEMTO \
+  --eval_model mamba \
+  --gen_model FlowMatch \
+  --gen_ablation no_tccm \
+  --source_run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_tccm" \
+  --output_run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_tccm_mamba_tstr" \
+  --config "$CONFIG_PATH"
 
-### Rank 3
+CUDA_VISIBLE_DEVICES=1 python3 train_generator.py \
+  --track bearing_rul \
+  --dataset FEMTO \
+  --model FlowMatch \
+  --ablation no_prior \
+  --run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_prior" \
+  --config "$CONFIG_PATH"
 
-- [ ] `python train_generator.py --track engine_rul --dataset N-CMAPSS --model "$TOP_3"`
-- [ ] `TOP3_NCMAPSS_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'N-CMAPSS', os.environ['TOP_3']).name)")"; echo "$TOP3_NCMAPSS_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset N-CMAPSS --model baseline --gen_model "$TOP_3" --source_run_id "$TOP3_NCMAPSS_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_rul --dataset FEMTO --model "$TOP_3"`
-- [ ] `TOP3_FEMTO_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_rul', 'FEMTO', os.environ['TOP_3']).name)")"; echo "$TOP3_FEMTO_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_rul --dataset FEMTO --model baseline --gen_model "$TOP_3" --source_run_id "$TOP3_FEMTO_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_rul --dataset XJTU-SY --model "$TOP_3"`
-- [ ] `TOP3_XJTU_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_rul', 'XJTU-SY', os.environ['TOP_3']).name)")"; echo "$TOP3_XJTU_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_rul --dataset XJTU-SY --model baseline --gen_model "$TOP_3" --source_run_id "$TOP3_XJTU_RUN_ID"`
-- [ ] `python train_generator.py --track bearing_fault --dataset Paderborn --model "$TOP_3"`
-- [ ] `TOP3_PADERBORN_RUN_ID="$(python -c "import os; from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('bearing_fault', 'Paderborn', os.environ['TOP_3']).name)")"; echo "$TOP3_PADERBORN_RUN_ID"`
-- [ ] `python train_classifier.py --track bearing_fault --dataset Paderborn --model baseline --gen_model "$TOP_3" --source_run_id "$TOP3_PADERBORN_RUN_ID"`
+CUDA_VISIBLE_DEVICES=1 python3 train_classifier_aug.py \
+  --track bearing_rul \
+  --dataset FEMTO \
+  --eval_model mamba \
+  --gen_model FlowMatch \
+  --gen_ablation no_prior \
+  --source_run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_prior" \
+  --output_run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_prior_mamba_tstr" \
+  --config "$CONFIG_PATH"
 
----
+CUDA_VISIBLE_DEVICES=1 python3 train_generator.py \
+  --track bearing_rul \
+  --dataset FEMTO \
+  --model FlowMatch \
+  --ablation no_lap \
+  --run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_lap" \
+  --config "$CONFIG_PATH"
 
-## Phase 4: FlowMatch-PdM Ablations
+CUDA_VISIBLE_DEVICES=1 python3 train_classifier_aug.py \
+  --track bearing_rul \
+  --dataset FEMTO \
+  --eval_model mamba \
+  --gen_model FlowMatch \
+  --gen_ablation no_lap \
+  --source_run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_lap" \
+  --output_run_id "${FLOWMATCH_TAG}_femto_flowmatch_no_lap_mamba_tstr" \
+  --config "$CONFIG_PATH"
+```
 
-**Goal:** run real ablation variants on CMAPSS with the same automatic generator evaluation and augmented-classifier evaluation workflow.
+### Step 4
 
-### No Prior
+Trigger the FEMTO FlowMatch W&B sweep from:
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model FlowMatch --ablation no_prior`
-- [ ] `ABL_NO_PRIOR_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'FlowMatch_ablation_no_prior').name)")"; echo "$ABL_NO_PRIOR_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model FlowMatch --gen_ablation no_prior --source_run_id "$ABL_NO_PRIOR_RUN_ID"`
+- `configs/sweep_flowmatch_femto.yaml`
 
-### No TCCM
+Sweep parameters:
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model FlowMatch --ablation no_tccm`
-- [ ] `ABL_NO_TCCM_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'FlowMatch_ablation_no_tccm').name)")"; echo "$ABL_NO_TCCM_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model FlowMatch --gen_ablation no_tccm --source_run_id "$ABL_NO_TCCM_RUN_ID"`
+- `lr` in `[1e-4, 1e-3]`
+- `tccm_lambda` in `[0.01, 1.0]`
+- `euler_steps` in `[100, 500]`
 
-### No LAP
+Manual commands for `GPU 1`:
 
-- [ ] `python train_generator.py --track engine_rul --dataset CMAPSS --model FlowMatch --ablation no_lap`
-- [ ] `ABL_NO_LAP_RUN_ID="$(python -c "from src.utils.logger_utils import resolve_run_dir; print(resolve_run_dir('engine_rul', 'CMAPSS', 'FlowMatch_ablation_no_lap').name)")"; echo "$ABL_NO_LAP_RUN_ID"`
-- [ ] `python train_classifier.py --track engine_rul --dataset CMAPSS --model baseline --gen_model FlowMatch --gen_ablation no_lap --source_run_id "$ABL_NO_LAP_RUN_ID"`
+```bash
+CUDA_VISIBLE_DEVICES=1 wandb sweep configs/sweep_flowmatch_femto.yaml
+# then launch the returned agent command:
+# CUDA_VISIBLE_DEVICES=1 wandb agent <SWEEP_ID>
+```
 
----
+### Step 5
 
-## Phase 5: W&B Sweep And Final Proof-Of-Concept
+Run the classical RUL Mamba baselines with:
 
-### 5A. CMAPSS FlowMatch-PdM Sweep
+- noise augmentation on FEMTO
+- SMOTE-style minority interpolation on FEMTO
+- noise augmentation on XJTU-SY
+- SMOTE-style minority interpolation on XJTU-SY
 
-- [ ] `wandb sweep configs/sweep_flowmatch_cmapss.yaml`
-- [ ] `wandb agent <SWEEP_ID>`
+These are the first jobs that belong on the `GPU 0` background queue.
 
-### 5B. Final CMAPSS Proof-Of-Concept
+### Step 6
 
-- [ ] `./run_all.sh`
+Train the remaining non-FlowMatch generators on both datasets:
 
-### Optional Manual Re-Evaluation Commands
+- `COTGAN`
+- `FaultDiffusion`
+- `DiffusionTS`
+- `TimeFlow`
 
-- [ ] `python run_evaluation.py --eval_mode generator --track engine_rul --dataset CMAPSS --model FlowMatch --run_id "$CMAPSS_FLOWMATCH_RUN_ID"`
-- [ ] `python run_evaluation.py --eval_mode classifier --track engine_rul --dataset CMAPSS --model baseline`
-- [ ] `python run_evaluation.py --eval_mode classifier --track engine_rul --dataset CMAPSS --model baseline --source_gen_model FlowMatch --source_run_id "$CMAPSS_FLOWMATCH_RUN_ID"`
+### Step 7
 
-### Final Checks
+Train downstream Mamba regressors using each synthetic generator run from Step 6.
 
-- [ ] Generator runs always contain `generator_datas/` and `evaluation_results/metrics.json`
-- [ ] Classifier runs always contain `evaluation_results/classifier_metrics.json`
-- [ ] Phase 4 ablation results are logged in `docs/03_result_logger.md`
-- [ ] Sweep winner and proof-of-concept run IDs are logged in `docs/03_result_logger.md`
+## Entry Points
+
+- Manual `FlowMatch` lane on `GPU 1`: run the command blocks in Steps 1 to 4
+- Full scripted queue: `bash final_execution.sh`
+- Compatibility runner: `python3 orchestrate.py`
+- Tmux launcher: `bash launch.sh`
+
+For the current two-GPU workflow:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 RUN_TAG="$BG_TAG" python3 orchestrate.py
+```
+
+`orchestrate.py` is now a strict sequential non-FlowMatch queue. Once launched on `GPU 0`, it runs only:
+
+- Step 5 classical Mamba baselines
+- Step 6 non-FlowMatch generators
+- Step 7 downstream Mamba TSTR for those generators
+
+The queue is strictly one-by-one and does not launch any `FlowMatch`, ablation, or sweep jobs.
+
+The runner uses fixed run IDs derived from the selected run tag and does not rely on pre-populated ledger state.

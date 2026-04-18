@@ -1,24 +1,11 @@
 # src/utils/data_helper.py
 import pytorch_lightning as pl
 
-from datasets.cwru_data_loader import CWRUDataModule
-from datasets.demadics_data_loader import DEMADICSDataModule
-from datasets.paderborn_data_loader import PaderbornDataModule
-from datasets.rul_data_loader import FlowMatchRULDataModule
-
-
 _DATASET_NAME_ALIASES = {
-    "CMAPSS": "CMAPSS",
-    "C-MAPSS": "CMAPSS",
-    "N-CMAPSS": "N-CMAPSS",
-    "NCMAPSS": "N-CMAPSS",
     "FEMTO": "FEMTO",
     "XJTU-SY": "XJTU-SY",
     "XJTU_SY": "XJTU-SY",
     "XJTUSY": "XJTU-SY",
-    "CWRU": "CWRU",
-    "PADERBORN": "Paderborn",
-    "DEMADICS": "DEMADICS",
 }
 
 
@@ -47,27 +34,19 @@ def get_data_module(track: str, dataset_name: str, **kwargs) -> pl.LightningData
     track = track.lower().strip()
     canonical_name = canonicalize_dataset_name(dataset_name)
 
-    if track in ["engine_rul", "bearing_rul"]:
-        supported_rul = ["CMAPSS", "N-CMAPSS", "FEMTO", "XJTU-SY"]
-        if canonical_name not in supported_rul:
-            raise ValueError(
-                f"Dataset {canonical_name} is not supported for RUL tracks. "
-                f"Choose from {supported_rul}."
-            )
-        return FlowMatchRULDataModule(dataset_name=canonical_name, **kwargs)
-
-    if track == "bearing_fault":
-        if canonical_name == "CWRU":
-            return CWRUDataModule(**kwargs)
-        if canonical_name == "Paderborn":
-            return PaderbornDataModule(**kwargs)
-        if canonical_name == "DEMADICS":
-            return DEMADICSDataModule(**kwargs)
+    if track != "bearing_rul":
         raise ValueError(
-            f"Dataset {canonical_name} is not supported for classification. "
-            "Choose CWRU, Paderborn, or DEMADICS."
+            f"Unsupported track '{track}' for the current pivot. "
+            "Only 'bearing_rul' is active."
         )
 
-    raise ValueError(
-        f"Unknown track: '{track}'. Use 'engine_rul', 'bearing_rul', or 'bearing_fault'."
-    )
+    supported_rul = ["FEMTO", "XJTU-SY"]
+    if canonical_name not in supported_rul:
+        raise ValueError(
+            f"Dataset {canonical_name} is not supported for the current pivot. "
+            f"Choose from {supported_rul}."
+        )
+
+    from datasets.rul_data_loader import FlowMatchRULDataModule
+
+    return FlowMatchRULDataModule(dataset_name=canonical_name, **kwargs)

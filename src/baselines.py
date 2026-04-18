@@ -40,6 +40,57 @@ class ClassicalAugmenter:
         return X_resampled.reshape(-1, window_size, features), y_resampled
 
     @staticmethod
+    def apply_smote_regression(
+        X: np.ndarray,
+        y: np.ndarray,
+        k_neighbors: int = 5,
+        n_samples: int | None = None,
+        random_state: int = 42,
+    ):
+        """
+        Generate SMOTE-style interpolated minority windows for regression targets.
+
+        This is a lightweight SMOTER-inspired variant that interpolates between
+        nearest-neighbour low-RUL windows and linearly blends their targets.
+        """
+
+        from sklearn.neighbors import NearestNeighbors
+
+        batch_size, window_size, features = X.shape
+        if batch_size < 2:
+            raise ValueError("Regression SMOTE requires at least two source samples.")
+
+        X_flat = X.reshape(batch_size, -1).astype(np.float32)
+        y_array = np.asarray(y, dtype=np.float32)
+        y_flat = y_array.reshape(batch_size, -1)
+
+        resolved_neighbors = max(1, min(int(k_neighbors), batch_size - 1))
+        nn = NearestNeighbors(n_neighbors=resolved_neighbors + 1)
+        nn.fit(X_flat)
+        neighbor_indices = nn.kneighbors(return_distance=False)
+
+        rng = np.random.default_rng(random_state)
+        synth_count = int(n_samples or batch_size)
+        synth_x = np.empty((synth_count, X_flat.shape[1]), dtype=np.float32)
+        synth_y = np.empty((synth_count, y_flat.shape[1]), dtype=np.float32)
+
+        for idx in range(synth_count):
+            anchor_idx = int(rng.integers(0, batch_size))
+            candidates = neighbor_indices[anchor_idx, 1:]
+            if candidates.size == 0:
+                neighbor_idx = anchor_idx
+            else:
+                neighbor_idx = int(rng.choice(candidates))
+
+            mix = float(rng.random())
+            synth_x[idx] = X_flat[anchor_idx] + mix * (X_flat[neighbor_idx] - X_flat[anchor_idx])
+            synth_y[idx] = y_flat[anchor_idx] + mix * (y_flat[neighbor_idx] - y_flat[anchor_idx])
+
+        synthetic_x = synth_x.reshape(synth_count, window_size, features)
+        synthetic_y = synth_y.reshape(synth_count, *y_array.shape[1:])
+        return synthetic_x, synthetic_y.astype(y_array.dtype, copy=False)
+
+    @staticmethod
     def apply_jittering(X: np.ndarray, sigma: float = 0.05):
         return X + np.random.normal(loc=0.0, scale=sigma, size=X.shape)
 

@@ -8,38 +8,26 @@ logging:
 # Global Training Parameters
 trainer:
   accelerator: "gpu"
-  devices: "auto"
+  devices: 1
   precision:
     rul: 32
-    fault: "16-mixed"
-    generator: "16-mixed"
+    generator: 32
   patience: 30
+  classifier_patience: 5
+  classifier_min_delta: 0.5
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: "norm"
 
 # Dataset Specific Parameters
 datasets:
   minority_rul_ratio: 0.2
 
-  CMAPSS:
-    track: "engine_rul"
-    window_size: 30
-    batch_size: 128
-    max_rul: 125
-    conditions: [1, 2, 3, 4]
-    split_strategy: "predefined"
-    clipping: "piecewise_linear"
-
-  N-CMAPSS:
-    track: "engine_rul"
-    window_size: 50
-    batch_size: 128
-    max_rul: 125
-    conditions: [1, 2, 3, 4, 5, 6, 7, 8]
-    split_strategy: "predefined"
-
   FEMTO:
     track: "bearing_rul"
     window_size: 2560
     batch_size: 64
+    generator_batch_size: 32
+    classifier_target_rmse: 225.0
     max_rul: 1500
     # Use FD ids to preserve the reader's canonical dev/val/test split.
     conditions: [1, 2, 3]
@@ -50,74 +38,40 @@ datasets:
     track: "bearing_rul"
     window_size: 2048
     batch_size: 64
+    generator_batch_size: 32
+    classifier_target_rmse: 75.0
     max_rul: 1200
     conditions: [1, 2, 3]
     split_strategy: "predefined"
 
-  CWRU:
-    track: "bearing_fault"
-    window_size: 2048
-    stride: 512
-    batch_size: 256
-    num_classes: 10
-    split_strategy: "stratified_80_10_10"
-
-  Paderborn:
-    track: "bearing_fault"
-    window_size: 4096
-    stride: 2048
-    batch_size: 256
-    num_classes: 31
-    split_strategy: "stratified_80_10_10"
-
-  DEMADICS:
-    track: "bearing_fault"
-    window_size: 2048
-    batch_size: 256
-    num_classes: 5
-    split_strategy: "stratified_80_10_10"
-
-# ==========================================
-# Classifier Baselines (SOTA 2024-2025)
-# ==========================================
 classifier:
-  # Ref: Chen et al. arXiv:2410.03134
+  mamba:
+    d_model: 64
+    d_state: 16
+    d_conv: 4
+    expand: 2
+    lr: 0.0003
+    epochs: 20
   lstm:
     hidden_dim: 100
     num_layers: 2
     dropout: 0.5
     lr: 0.001
-    epochs: 500
-  
-  # Ref: Vashishtha et al. arXiv:2502.08689
+    epochs: 20
   cnn1d:
-    filters: [16, 64, 128, 256, 256]
-    kernel_sizes: [3, 3, 3, 3, 3]
     dropout: 0.3
     lr: 0.001
-    epochs: 500
+    epochs: 20
+  transformer:
+    patch_size: 32
+    d_model: 64
+    nhead: 4
+    num_layers: 2
+    dropout: 0.3
+    lr: 0.0005
+    epochs: 20
 
-# ==========================================
-# Generative Baselines
-# ==========================================
 generative:
-  # Ref: TSGM framework arXiv:2305.11567
-  timevae:
-    latent_dim: 16
-    hidden_dim: 64
-    lr: 0.001
-    epochs: 500
-    batch_size: 128
-  
-  # Ref: Ren et al. AIGC survey arXiv:2407.11480
-  timegan:
-    hidden_dim: 24
-    noise_dim: 32
-    lr: 0.0001
-    epochs: 500
-    batch_size: 128
-  
-  # Ref: Diff-MTS + survey arXiv:2407.11501
   diffusion:
     timesteps: 200
     lr: 0.0002
@@ -125,25 +79,31 @@ generative:
     batch_size: 128
     base_channels: 64
     num_heads: 4
-  
-  # Ref: TimeFlow (Towards Stochastic-Aware and Efficient TS Gen)
+
   timeflow:
     hidden_dim: 64
     euler_steps: 100
     lr: 0.001
     epochs: 200
     batch_size: 128
-  
-  # FlowMatch-PdM Parameters
+
   flowmatch_pdm:
+    patch_size: 32
     mamba_d_model: 128
     mamba_d_state: 16
-    euler_steps: 100
+    d_conv: 4
+    expand: 2
+    num_mamba_layers: 3
+    euler_steps: 200
     lr: 0.001
     epochs: 200
     batch_size: 128
+    field_clamp: 10.0
+    spectral_lambda: 0.1
     lap_threshold: 0.05
-    tccm_lambda: 10.0
+    tccm_lambda: 0.1
+    use_harmonic_prior: true
+    use_tccm: true
 
   cotgan:
     hidden_dim: 128
@@ -169,16 +129,13 @@ generative:
 evaluation:
   batch_size: 128
   max_samples: 2048
-  euler_steps: 100
+  euler_steps: 200
   mmd_kernel_bandwidth: "median"
   discriminative_hidden_dim: 64
   discriminative_epochs: 20
   predictive_epochs: 20
   tstr_epochs: 20
 
-# ==========================================
-# Classical Baselines
-# ==========================================
 classical:
   smote:
     k_neighbors: 5
