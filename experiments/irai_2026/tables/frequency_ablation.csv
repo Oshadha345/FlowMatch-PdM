@@ -1,8 +1,8 @@
-dataset,variant,variant_type,param,seed,epochs,window_size,status,error
-FEMTO,raw,none,None,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,lowpass_0.3,lowpass,0.3,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,lowpass_0.1,lowpass,0.1,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,lowpass_0.05,lowpass,0.05,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,bandpass_0.05_0.3,bandpass,"(0.05, 0.3)",42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,downsample_2x,downsample,2,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,downsample_4x,downsample,4,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+dataset,variant,variant_type,param,seed,epochs,window_size,train_time_s,gen_time_s,status,real_mean,synth_mean,real_std,synth_std,mean_abs_diff,std_abs_diff,power_spectrum_l2,power_spectrum_corr,mmd,real_hf_energy_ratio,synth_hf_energy_ratio
+FEMTO,raw,none,None,42,30,2560,20.81,2.32,success,0.198877,0.122705,1.524246,1.361576,0.076172,0.16267,28827.69057,0.806806,0.366748,0.328249,0.764078
+FEMTO,lowpass_0.3,lowpass,0.3,42,30,2560,16.55,2.38,success,0.198888,0.162785,1.264074,0.607215,0.036104,0.65686,11164.527479,0.96115,0.204711,0.000444,0.023339
+FEMTO,lowpass_0.1,lowpass,0.1,42,30,2560,20.11,2.29,success,0.198875,0.188508,0.892657,0.935401,0.010367,0.042744,12262.73692,0.96454,0.077085,0.000608,0.015759
+FEMTO,lowpass_0.05,lowpass,0.05,42,30,2560,17.14,2.36,success,0.198944,0.197988,0.578228,0.48592,0.000957,0.092309,14945.754067,0.983484,0.109248,0.000545,0.042588
+FEMTO,bandpass_0.05_0.3,bandpass,"(0.05, 0.3)",42,30,2560,20.81,2.33,success,-5.2e-05,0.002023,1.106604,0.309681,0.002074,0.796923,9438.942959,0.106358,0.211353,5.7e-05,0.116836
+FEMTO,downsample_2x,downsample,2,42,30,2560,17.39,2.37,success,0.196596,0.205228,1.253771,0.96111,0.008632,0.292661,18977.459148,0.861773,0.153348,0.01098,0.023434
+FEMTO,downsample_4x,downsample,4,42,30,2560,20.86,2.36,success,0.196578,0.215294,1.091097,0.579715,0.018716,0.511382,8590.782892,0.97604,0.190656,0.002194,0.028154

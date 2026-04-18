@@ -1,7 +1,7 @@
-dataset,model,seq_length,seed,epochs,status,error
-FEMTO,FlowMatch,128,42,30,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,FlowMatch,256,42,30,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,FlowMatch,512,42,30,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,FlowMatch,1024,42,30,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,FlowMatch,2048,42,30,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
-FEMTO,FlowMatch,2560,42,30,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+dataset,model,seq_length,seed,epochs,train_time_s,gen_time_s,num_samples,status,real_mean,synth_mean,real_std,synth_std,mean_abs_diff,std_abs_diff,power_spectrum_l2,power_spectrum_corr,mmd
+FEMTO,FlowMatch,128,42,30,14.46,1.5,256,success,0.195403,0.232717,1.53288,1.207496,0.037314,0.325384,268.346095,0.907105,0.198486
+FEMTO,FlowMatch,256,42,30,18.52,1.4,256,success,0.198899,0.157984,1.631015,1.363796,0.040916,0.267219,1120.695638,0.68307,0.278846
+FEMTO,FlowMatch,512,42,30,16.12,1.53,256,success,0.198646,0.232444,1.521703,1.460582,0.033798,0.061121,2782.513772,0.691925,0.228515
+FEMTO,FlowMatch,1024,42,30,14.71,1.74,256,success,0.198843,0.239324,1.534939,0.615878,0.040481,0.919061,4183.497382,0.927974,0.235028
+FEMTO,FlowMatch,2048,42,30,19.63,2.15,256,success,0.198853,0.217926,1.532802,1.305026,0.019073,0.227776,16066.449394,0.827778,0.126683
+FEMTO,FlowMatch,2560,42,30,17.54,2.36,256,success,0.198877,0.335314,1.524246,0.64951,0.136437,0.874736,19676.931741,0.964005,0.30503
