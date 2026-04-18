@@ -1,0 +1,8 @@
+dataset,variant,variant_type,param,seed,epochs,window_size,status,error
+FEMTO,raw,none,None,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+FEMTO,lowpass_0.3,lowpass,0.3,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+FEMTO,lowpass_0.1,lowpass,0.1,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+FEMTO,lowpass_0.05,lowpass,0.05,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+FEMTO,bandpass_0.05_0.3,bandpass,"(0.05, 0.3)",42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+FEMTO,downsample_2x,downsample,2,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+FEMTO,downsample_4x,downsample,4,42,30,2560,failed,"Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"

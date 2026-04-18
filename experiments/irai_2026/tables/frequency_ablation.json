@@ -1,0 +1,79 @@
+[
+  {
+    "dataset": "FEMTO",
+    "variant": "raw",
+    "variant_type": "none",
+    "param": "None",
+    "seed": 42,
+    "epochs": 30,
+    "window_size": 2560,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "variant": "lowpass_0.3",
+    "variant_type": "lowpass",
+    "param": "0.3",
+    "seed": 42,
+    "epochs": 30,
+    "window_size": 2560,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "variant": "lowpass_0.1",
+    "variant_type": "lowpass",
+    "param": "0.1",
+    "seed": 42,
+    "epochs": 30,
+    "window_size": 2560,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "variant": "lowpass_0.05",
+    "variant_type": "lowpass",
+    "param": "0.05",
+    "seed": 42,
+    "epochs": 30,
+    "window_size": 2560,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "variant": "bandpass_0.05_0.3",
+    "variant_type": "bandpass",
+    "param": "(0.05, 0.3)",
+    "seed": 42,
+    "epochs": 30,
+    "window_size": 2560,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "variant": "downsample_2x",
+    "variant_type": "downsample",
+    "param": "2",
+    "seed": 42,
+    "epochs": 30,
+    "window_size": 2560,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "variant": "downsample_4x",
+    "variant_type": "downsample",
+    "param": "4",
+    "seed": 42,
+    "epochs": 30,
+    "window_size": 2560,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  }
+]

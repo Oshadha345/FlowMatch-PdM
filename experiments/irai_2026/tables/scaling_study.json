@@ -1,0 +1,56 @@
+[
+  {
+    "dataset": "FEMTO",
+    "model": "FlowMatch",
+    "seq_length": 128,
+    "seed": 42,
+    "epochs": 30,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "model": "FlowMatch",
+    "seq_length": 256,
+    "seed": 42,
+    "epochs": 30,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "model": "FlowMatch",
+    "seq_length": 512,
+    "seed": 42,
+    "epochs": 30,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "model": "FlowMatch",
+    "seq_length": 1024,
+    "seed": 42,
+    "epochs": 30,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "model": "FlowMatch",
+    "seq_length": 2048,
+    "seed": 42,
+    "epochs": 30,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  },
+  {
+    "dataset": "FEMTO",
+    "model": "FlowMatch",
+    "seq_length": 2560,
+    "seed": 42,
+    "epochs": 30,
+    "status": "failed",
+    "error": "Expected x.is_cuda() to be true, but got false.  (Could this error message be improved?  If so, please report an enhancement request to PyTorch.)"
+  }
+]
