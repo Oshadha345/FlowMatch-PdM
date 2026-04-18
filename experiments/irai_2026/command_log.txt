@@ -1,0 +1,16 @@
+# IRAI 2026 Reviewer Experiment Commands
+# Generated: 2026-04-18T22:25:21.162558
+# Conda env: flowmatch_pdm
+# Working dir: FlowMatch-PdM/
+
+conda activate flowmatch_pdm
+
+python experiments/exp1_scaling_study.py --dataset FEMTO --epochs 30 --seed 42 --config configs/default_config.yaml
+python experiments/exp2_frequency_ablation.py --dataset FEMTO --epochs 30 --seed 42 --config configs/default_config.yaml
+python experiments/exp4_alternative_baselines.py --dataset FEMTO --epochs 30 --seed 42 --config configs/default_config.yaml
+python experiments/exp5_tstr_robustness.py --dataset FEMTO --gen_epochs 30 --config configs/default_config.yaml
+python experiments/exp6_cross_dataset.py --epochs 30 --seed 42 --config configs/default_config.yaml
+python experiments/exp7_failure_visualization.py --dataset FEMTO --epochs 30 --seed 42 --config configs/default_config.yaml
+
+# Or run all at once:
+python experiments/run_all_experiments.py --dataset FEMTO --epochs 30 --seed 42

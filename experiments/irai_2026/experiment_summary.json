@@ -1,0 +1,49 @@
+{
+  "timestamp": "2026-04-18T22:25:21.157255",
+  "total_runtime_s": 1384.8,
+  "dataset": "FEMTO",
+  "epochs": 30,
+  "seed": 42,
+  "experiments_run": [
+    1,
+    2,
+    4,
+    5,
+    6,
+    7
+  ],
+  "experiment_status": {
+    "exp1_scaling": {
+      "status": "success",
+      "runtime_s": 126.3
+    },
+    "exp2_frequency": {
+      "status": "success",
+      "runtime_s": 218.2
+    },
+    "exp4_baselines": {
+      "status": "success",
+      "runtime_s": 206.7
+    },
+    "exp5_tstr": {
+      "status": "success",
+      "runtime_s": 239.6
+    },
+    "exp6_cross_dataset": {
+      "status": "success",
+      "runtime_s": 538.7
+    },
+    "exp7_visualization": {
+      "status": "success",
+      "runtime_s": 37.4
+    }
+  },
+  "command_log": [
+    "python experiments/exp1_scaling_study.py --dataset FEMTO --epochs 30 --seed 42 --config configs/default_config.yaml",
+    "python experiments/exp2_frequency_ablation.py --dataset FEMTO --epochs 30 --seed 42 --config configs/default_config.yaml",
+    "python experiments/exp4_alternative_baselines.py --dataset FEMTO --epochs 30 --seed 42 --config configs/default_config.yaml",
+    "python experiments/exp5_tstr_robustness.py --dataset FEMTO --gen_epochs 30 --config configs/default_config.yaml",
+    "python experiments/exp6_cross_dataset.py --epochs 30 --seed 42 --config configs/default_config.yaml",
+    "python experiments/exp7_failure_visualization.py --dataset FEMTO --epochs 30 --seed 42 --config configs/default_config.yaml"
+  ]
+}
