@@ -1,0 +1,30 @@
+{
+  "label_values": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "metrics": {
+    "gate_passed": false,
+    "min_relative_balanced_accuracy": 0.8,
+    "min_relative_f1": 0.8,
+    "real_num_classes": 4,
+    "relative_balanced_accuracy": 0.5854618092948173,
+    "relative_f1_macro": 0.3756133046189304,
+    "synthetic_num_classes": 4,
+    "trtr_accuracy": 0.42911877394636017,
+    "trtr_balanced_accuracy": 0.43094041375291375,
+    "trtr_cross_entropy": 1.0391547972861925,
+    "trtr_f1_macro": 0.4229599252491694,
+    "trtr_mcc": 0.2439500208527681,
+    "tstr_accuracy": 0.2540229885057471,
+    "tstr_applicable": true,
+    "tstr_balanced_accuracy": 0.25229915433403804,
+    "tstr_cross_entropy": 1.4101624854432364,
+    "tstr_f1_macro": 0.1588693752442163,
+    "tstr_mcc": 0.004553709949343972
+  },
+  "num_real_samples": 870,
+  "num_synthetic_samples": 870
+}

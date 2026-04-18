@@ -1,0 +1,19 @@
+Tstr Seed 123 Evaluation
+gate_passed: False
+tstr_applicable: True
+synthetic_num_classes: 4
+real_num_classes: 4
+tstr_accuracy: 0.267816091954023
+tstr_balanced_accuracy: 0.26884249471458777
+tstr_f1_macro: 0.2562336836988397
+tstr_mcc: 0.02582761207572709
+tstr_cross_entropy: 1.3872494828439932
+trtr_accuracy: 0.3716475095785441
+trtr_balanced_accuracy: 0.37300954254079255
+trtr_f1_macro: 0.3869831119287669
+trtr_mcc: 0.16408306592337013
+trtr_cross_entropy: 1.182850837146094
+relative_f1_macro: 0.6621314362317842
+relative_balanced_accuracy: 0.7207389196623221
+min_relative_f1: 0.8
+min_relative_balanced_accuracy: 0.8
