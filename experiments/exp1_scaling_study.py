@@ -139,6 +139,7 @@ def run_scaling_study(
             
             # Generate
             model.eval()
+            model.to(device)
             num_gen = min(len(ds), 256)
             cond = torch.from_numpy(targets[:num_gen]).float()
             

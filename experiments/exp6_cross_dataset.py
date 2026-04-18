@@ -102,6 +102,7 @@ def run_cross_dataset(
             
             # Generate
             model.eval()
+            model.to(device)
             num_gen = min(len(ds), 256)
             cond = torch.from_numpy(real_targets[:num_gen]).float()
             

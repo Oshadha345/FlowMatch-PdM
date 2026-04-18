@@ -102,6 +102,7 @@ def run_tstr_robustness(
             
             # Generate synthetic data
             model.eval()
+            model.to(device)
             num_gen = len(ds)
             cond = torch.from_numpy(real_targets[:num_gen]).float()
             

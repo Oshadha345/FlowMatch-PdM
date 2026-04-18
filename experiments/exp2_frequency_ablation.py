@@ -155,6 +155,7 @@ def run_frequency_ablation(
             
             # Generate
             model.eval()
+            model.to(device)
             num_gen = min(len(ds), 256)
             cond = torch.from_numpy(real_targets[:num_gen]).float()
             

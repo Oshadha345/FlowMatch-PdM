@@ -54,7 +54,9 @@ def _train_quick_model(real_data, real_targets, window_size, input_dim, config, 
     )
     trainer.fit(model, train_dataloaders=loader)
     
+    device = get_device()
     model.eval()
+    model.to(device)
     num_gen = min(len(ds), 256)
     cond = torch.from_numpy(real_targets[:num_gen]).float()
     with torch.no_grad():

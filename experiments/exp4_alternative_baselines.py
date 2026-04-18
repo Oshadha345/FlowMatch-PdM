@@ -264,6 +264,7 @@ def run_alternative_baselines(
             
             # Generate
             model.eval()
+            model.to(device)
             cond = torch.from_numpy(real_targets[:num_gen]).float()
             
             t0 = time.time()

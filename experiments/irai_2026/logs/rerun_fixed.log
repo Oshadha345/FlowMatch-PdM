@@ -1,0 +1,5 @@
+usage: run_all_experiments.py [-h]
+                              [--experiments EXPERIMENTS [EXPERIMENTS ...]]
+                              [--dataset DATASET] [--epochs EPOCHS]
+                              [--seed SEED] [--config CONFIG]
+run_all_experiments.py: error: argument --experiments: invalid int value: '1,2,4,5,6,7'
